@@ -2,6 +2,12 @@
 
 All notable changes to KeystoneSync will be documented here.
 
+## [0.1.6] - 2026-05-30
+
+### Fixed
+- Added a bag-scan fallback for Mythic Keystone detection. If `C_MythicPlus.GetOwnedKeystoneLevel()` or `C_MythicPlus.GetOwnedKeystoneChallengeMapID()` returns empty during login/logout, the addon now scans the character bags, detects the Mythic Keystone item, and parses its item link to recover the keystone level and challenge map ID.
+- Prevented valid saved keystone data from being overwritten by a transient empty read. If the current scan fails but the character already has a valid keystone stored, the addon keeps the previous keystone data instead of writing `hasKeystone = false`.
+
 ## [0.1.5] - 2026-05-30
 
 ### Changed

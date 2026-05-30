@@ -1,8 +1,8 @@
 ## Interface: 120005
 ## Title: KeystoneSync
-## Notes: Guarda la piedra mítica+ actual del personaje en SavedVariables.
+## Notes: Guarda la piedra mitica+ actual del personaje en SavedVariables.
 ## Author: Esteban
-## Version: 0.1.5
+## Version: 0.1.6
 ## SavedVariables: KeystoneSyncDB
 
 KeystoneSync.lua
