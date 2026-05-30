@@ -329,6 +329,16 @@ local function GetBestAffixScore(affixScores)
     return best
 end
 
+local function GetRunChallengeMapId(run)
+    if not run then return nil end
+    return run.challengeModeID or run.challengeMapID or run.mapChallengeModeID or run.challengeMapId or run.mapId
+end
+
+local function GetRunScore(run)
+    if not run then return nil end
+    return run.mapScore or run.score or run.bestRunScore or run.overallScore
+end
+
 local function GetMythicPlusSeason()
     local result = {
         rating = 0,
@@ -352,7 +362,7 @@ local function GetMythicPlusSeason()
 
         if ratingSummary and ratingSummary.runs then
             for _, run in ipairs(ratingSummary.runs) do
-                if run.challengeModeID == challengeMapId then
+                if GetRunChallengeMapId(run) == challengeMapId then
                     summaryRun = run
                     break
                 end
@@ -390,7 +400,7 @@ local function GetMythicPlusSeason()
             level = level or 0,
             timed = timed,
             upgradeLevel = upgradeLevel,
-            rating = bestOverAllScore or (summaryRun and summaryRun.mapScore) or 0,
+            rating = (bestOverAllScore and bestOverAllScore > 0 and bestOverAllScore) or GetRunScore(summaryRun) or 0,
             bestOverAllScore = bestOverAllScore or 0,
             bestTimedRun = CopyRunInfo(bestTimedRun),
             bestNotTimedRun = CopyRunInfo(bestNotTimedRun),
