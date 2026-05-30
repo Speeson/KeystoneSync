@@ -5,9 +5,31 @@ local PREFIX = "[KeystoneSync]"
 local REGION = "eu"
 local MAX_LEVEL = 90
 
+local CURRENCIES = {
+    { key = "adventurerDawncrest", id = 3383 },
+    { key = "veteranDawncrest", id = 3341 },
+    { key = "championDawncrest", id = 3343 },
+    { key = "heroDawncrest", id = 3345 },
+    { key = "mythDawncrest", id = 3347 },
+    { key = "dawnlightManaflux", id = 3378 },
+    { key = "radiantSparkDust", id = 3212 },
+    { key = "cofferKeyShards", id = 3310 },
+    { key = "restoredCofferKey", id = 3028 },
+    { key = "nebulousVoidcore", id = 3418 },
+}
+
+local SPARK_OF_RADIANCE_ITEM_ID = 232875
+
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("PLAYER_LOGOUT")
+frame:RegisterEvent("WEEKLY_REWARDS_UPDATE")
+frame:RegisterEvent("CHALLENGE_MODE_MAPS_UPDATE")
+frame:RegisterEvent("MYTHIC_PLUS_NEW_WEEKLY_RECORD")
+frame:RegisterEvent("CURRENCY_DISPLAY_UPDATE")
+frame:RegisterEvent("QUEST_LOG_UPDATE")
+frame:RegisterEvent("BAG_UPDATE_DELAYED")
+frame:RegisterEvent("CHALLENGE_MODE_COMPLETED")
 
 local function GetCharacterKey()
     local character = UnitName("player")
@@ -63,16 +85,7 @@ local function GetKeystoneFromBags()
     return nil, nil
 end
 
-local function SaveCurrentKeystone(reason)
-    if UnitLevel("player") < MAX_LEVEL then return end
-
-    KeystoneSyncDB = KeystoneSyncDB or {}
-
-    local character = UnitName("player")
-    local realm = GetRealmName()
-    local key = GetCharacterKey()
-    local prev = KeystoneSyncDB and KeystoneSyncDB[key]
-
+local function GetCurrentKeystone(prev)
     local level = C_MythicPlus.GetOwnedKeystoneLevel()
     local challengeMapId = C_MythicPlus.GetOwnedKeystoneChallengeMapID()
     local mapId = C_MythicPlus.GetOwnedKeystoneMapID()
@@ -107,15 +120,241 @@ local function SaveCurrentKeystone(reason)
         end
     end
 
+    return {
+        hasKeystone = hasKeystone,
+        level = level,
+        challengeMapId = challengeMapId,
+        mapId = mapId,
+        dungeonName = dungeonName,
+    }
+end
+
+local function CountCompletedQuests(ids)
+    local count = 0
+    local completed = {}
+
+    for _, questID in ipairs(ids) do
+        if C_QuestLog.IsQuestFlaggedCompleted(questID) then
+            count = count + 1
+            table.insert(completed, questID)
+        end
+    end
+
+    return count, completed
+end
+
+local function BuildRange(startId, endId, step)
+    local ids = {}
+    for questID = startId, endId, step or 1 do
+        table.insert(ids, questID)
+    end
+    return ids
+end
+
+local function AppendRange(target, startId, endId, step)
+    for questID = startId, endId, step or 1 do
+        table.insert(target, questID)
+    end
+end
+
+local function GetPreyHunts()
+    local normal = BuildRange(91095, 91124)
+    local hard = {}
+    local nightmare = {}
+
+    AppendRange(hard, 91210, 91240, 2)
+    AppendRange(hard, 91242, 91255)
+
+    AppendRange(nightmare, 91211, 91241, 2)
+    AppendRange(nightmare, 91256, 91269)
+
+    local normalCount, normalCompleted = CountCompletedQuests(normal)
+    local hardCount, hardCompleted = CountCompletedQuests(hard)
+    local nightmareCount, nightmareCompleted = CountCompletedQuests(nightmare)
+
+    return {
+        normal = { count = normalCount, completedQuestIDs = normalCompleted },
+        hard = { count = hardCount, completedQuestIDs = hardCompleted },
+        nightmare = { count = nightmareCount, completedQuestIDs = nightmareCompleted },
+    }
+end
+
+local function GetCurrencyData()
+    local result = {}
+
+    for _, currencyDef in ipairs(CURRENCIES) do
+        local info = C_CurrencyInfo.GetCurrencyInfo(currencyDef.id)
+        if info then
+            local isComplete = false
+            if currencyDef.key == "nebulousVoidcore" and info.maxQuantity and info.maxQuantity > 0 then
+                isComplete = (info.totalEarned or info.quantity or 0) >= info.maxQuantity
+            end
+
+            result[currencyDef.key] = {
+                id = currencyDef.id,
+                name = info.name,
+                quantity = info.quantity or 0,
+                maxQuantity = info.maxQuantity or 0,
+                maxWeeklyQuantity = info.maxWeeklyQuantity or 0,
+                totalEarned = info.totalEarned or 0,
+                trackedQuantity = info.trackedQuantity or 0,
+                quantityEarnedThisWeek = info.quantityEarnedThisWeek or 0,
+                discovered = info.discovered == true,
+                quality = info.quality,
+                iconFileID = info.iconFileID,
+                isWeeklyComplete = isComplete,
+                displayColor = isComplete and "red" or nil,
+            }
+        end
+    end
+
+    result.sparksOfRadiance = {
+        itemID = SPARK_OF_RADIANCE_ITEM_ID,
+        quantity = C_Item.GetItemCount(SPARK_OF_RADIANCE_ITEM_ID, true) or 0,
+    }
+
+    return result
+end
+
+local function GetVaultData()
+    local result = {
+        hasAvailableRewards = C_WeeklyRewards.HasAvailableRewards() == true,
+        raid = { unlocked = 0, slots = {} },
+        dungeons = { unlocked = 0, slots = {} },
+        world = { unlocked = 0, slots = {} },
+    }
+
+    local typeMap = {
+        [Enum.WeeklyRewardChestThresholdType.Raid] = "raid",
+        [Enum.WeeklyRewardChestThresholdType.Activities] = "dungeons",
+        [Enum.WeeklyRewardChestThresholdType.World] = "world",
+    }
+
+    local activities = C_WeeklyRewards.GetActivities()
+    if not activities then return result end
+
+    for _, activity in ipairs(activities) do
+        local bucketName = typeMap[activity.type]
+        if bucketName then
+            local unlocked = activity.progress and activity.threshold and activity.progress >= activity.threshold
+            local slot = {
+                id = activity.id,
+                index = activity.index,
+                type = activity.type,
+                level = activity.level,
+                progress = activity.progress or 0,
+                threshold = activity.threshold or 0,
+                activityTierID = activity.activityTierID,
+                unlocked = unlocked == true,
+            }
+
+            table.insert(result[bucketName].slots, slot)
+            if unlocked then
+                result[bucketName].unlocked = result[bucketName].unlocked + 1
+            end
+        end
+    end
+
+    local heroic, mythic, mythicPlus = C_WeeklyRewards.GetNumCompletedDungeonRuns()
+    result.dungeons.completedRuns = {
+        heroic = heroic or 0,
+        mythic = mythic or 0,
+        mythicPlus = mythicPlus or 0,
+    }
+
+    return result
+end
+
+local function GetTimedUpgradeLevel(durationSec, timeLimit)
+    if not durationSec or not timeLimit or timeLimit <= 0 then return nil end
+    if durationSec <= timeLimit * 0.6 then return 3 end
+    if durationSec <= timeLimit * 0.8 then return 2 end
+    if durationSec <= timeLimit then return 1 end
+    return 0
+end
+
+local function GetMythicPlusSeason()
+    local result = {
+        rating = 0,
+        dungeons = {},
+    }
+
+    local ratingSummary = C_PlayerInfo.GetPlayerMythicPlusRatingSummary("player")
+    if ratingSummary and ratingSummary.currentSeasonScore then
+        result.rating = ratingSummary.currentSeasonScore
+    end
+
+    local maps = C_ChallengeMode.GetMapTable()
+    if not maps then return result end
+
+    for _, challengeMapId in ipairs(maps) do
+        local name, _, timeLimit, texture = C_ChallengeMode.GetMapUIInfo(challengeMapId)
+        local bestTimedRun, bestNotTimedRun = C_MythicPlus.GetSeasonBestForMap(challengeMapId)
+        local summaryRun = nil
+
+        if ratingSummary and ratingSummary.runs then
+            for _, run in ipairs(ratingSummary.runs) do
+                if run.challengeModeID == challengeMapId then
+                    summaryRun = run
+                    break
+                end
+            end
+        end
+
+        local level = 0
+        local timed = false
+        local durationSec = nil
+
+        if bestTimedRun then
+            level = bestTimedRun.level or bestTimedRun.keystoneLevel or level
+            durationSec = bestTimedRun.durationSec or bestTimedRun.durationSeconds
+            timed = true
+        elseif summaryRun then
+            level = summaryRun.bestRunLevel or level
+            timed = summaryRun.finishedSuccess == true
+        elseif bestNotTimedRun then
+            level = bestNotTimedRun.level or bestNotTimedRun.keystoneLevel or level
+        end
+
+        table.insert(result.dungeons, {
+            challengeMapId = challengeMapId,
+            name = name,
+            texture = texture,
+            timeLimit = timeLimit,
+            level = level or 0,
+            timed = timed,
+            upgradeLevel = timed and GetTimedUpgradeLevel(durationSec, timeLimit) or 0,
+            rating = summaryRun and summaryRun.mapScore or 0,
+        })
+    end
+
+    return result
+end
+
+local function SaveCharacterData(reason)
+    if UnitLevel("player") < MAX_LEVEL then return end
+
+    KeystoneSyncDB = KeystoneSyncDB or {}
+
+    local character = UnitName("player")
+    local realm = GetRealmName()
+    local key = GetCharacterKey()
+    local prev = KeystoneSyncDB and KeystoneSyncDB[key]
+    local keystone = GetCurrentKeystone(prev)
+
     KeystoneSyncDB[key] = KeystoneSyncDB[key] or {}
     KeystoneSyncDB[key].character = character
     KeystoneSyncDB[key].realm = realm
     KeystoneSyncDB[key].region = REGION
-    KeystoneSyncDB[key].hasKeystone = hasKeystone
-    KeystoneSyncDB[key].keystoneLevel = level
-    KeystoneSyncDB[key].keystoneChallengeMapId = challengeMapId
-    KeystoneSyncDB[key].keystoneMapId = mapId
-    KeystoneSyncDB[key].keystoneDungeon = dungeonName
+    KeystoneSyncDB[key].hasKeystone = keystone.hasKeystone
+    KeystoneSyncDB[key].keystoneLevel = keystone.level
+    KeystoneSyncDB[key].keystoneChallengeMapId = keystone.challengeMapId
+    KeystoneSyncDB[key].keystoneMapId = keystone.mapId
+    KeystoneSyncDB[key].keystoneDungeon = keystone.dungeonName
+    KeystoneSyncDB[key].vault = GetVaultData()
+    KeystoneSyncDB[key].preyHunts = GetPreyHunts()
+    KeystoneSyncDB[key].currencies = GetCurrencyData()
+    KeystoneSyncDB[key].mythicPlusSeason = GetMythicPlusSeason()
     KeystoneSyncDB[key].updatedAt = time()
     KeystoneSyncDB[key].updatedReason = reason
 end
@@ -137,15 +376,15 @@ local function PrintCurrentKeystone()
 end
 
 frame:SetScript("OnEvent", function(self, event)
-    if event == "PLAYER_LOGOUT" then
-        SaveCurrentKeystone("PLAYER_LOGOUT")
-    elseif event == "PLAYER_LOGIN" then
-        SaveCurrentKeystone("PLAYER_LOGIN")
+    if event == "PLAYER_LOGOUT" or event == "PLAYER_LOGIN" then
+        SaveCharacterData(event)
+    else
+        SaveCharacterData(event)
     end
 end)
 
 SLASH_KEYSTONESYNC1 = "/ksync"
 SlashCmdList["KEYSTONESYNC"] = function()
-    SaveCurrentKeystone("MANUAL_COMMAND")
+    SaveCharacterData("MANUAL_COMMAND")
     PrintCurrentKeystone()
 end

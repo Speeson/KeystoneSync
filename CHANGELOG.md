@@ -2,6 +2,14 @@
 
 All notable changes to KeystoneSync will be documented here.
 
+## [0.1.7] - 2026-05-30
+
+### Added
+- Capture Great Vault progress split by raid, dungeon, and world activity slots.
+- Capture weekly Prey Hunt completion counts split by Normal, Hard, and Nightmare.
+- Capture Midnight Season 1 currencies: Adventurer, Veteran, Champion, Hero, and Myth Dawncrests; Dawnlight Manaflux; Radiant Spark Dust; Spark of Radiance item count; Coffer Key Shards; Restored Coffer Key; and Nebulous Voidcore.
+- Capture current-season Mythic+ dungeon bests with challenge map ID, dungeon name, best level, timed status, rating, and computed upgrade level (`+1`, `+2`, `+3`) when duration data is available.
+
 ## [0.1.6] - 2026-05-30
 
 ### Fixed

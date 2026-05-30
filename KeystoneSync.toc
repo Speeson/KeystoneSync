@@ -2,7 +2,7 @@
 ## Title: KeystoneSync
 ## Notes: Guarda la piedra mitica+ actual del personaje en SavedVariables.
 ## Author: Esteban
-## Version: 0.1.6
+## Version: 0.1.7
 ## SavedVariables: KeystoneSyncDB
 
 KeystoneSync.lua
