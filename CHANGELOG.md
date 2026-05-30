@@ -2,6 +2,14 @@
 
 All notable changes to KeystoneSync will be documented here.
 
+## [0.1.5] - 2026-05-30
+
+### Changed
+- Simplified event handling: only `PLAYER_LOGIN` and `PLAYER_LOGOUT` are now registered. Removed `BAG_UPDATE_DELAYED`, `CHALLENGE_MODE_COMPLETED` (with its 3 delayed timers), and the 5-second `PLAYER_LOGIN` delay. Login and logout captures are sufficient for normal use, and the simpler model avoids redundant writes.
+
+### Fixed
+- Dungeon name (`keystoneDungeon`) no longer disappears from `KeystoneSyncDB` after a login. `C_ChallengeMode.GetMapUIInfo` can return `nil` at login time because challenge mode data is not yet loaded by the game engine. The addon now falls back to the previously stored name when the lookup fails and the keystone has not changed (`keystoneChallengeMapId` matches), so the name is preserved until a successful read overwrites it.
+
 ## [0.1.4] - 2026-05-27
 
 ### Added

@@ -8,8 +8,6 @@ local MAX_LEVEL = 90
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("PLAYER_LOGOUT")
-frame:RegisterEvent("CHALLENGE_MODE_COMPLETED")
-frame:RegisterEvent("BAG_UPDATE_DELAYED")
 
 local function GetCharacterKey()
     local character = UnitName("player")
@@ -36,6 +34,13 @@ local function SaveCurrentKeystone(reason)
         local name = C_ChallengeMode.GetMapUIInfo(challengeMapId)
         if name and name ~= "" then
             dungeonName = name
+        else
+            -- GetMapUIInfo no disponible aún (datos no cargados en login)
+            -- Si ya teníamos el nombre guardado para esta misma mazmorra, conservarlo
+            local prev = KeystoneSyncDB and KeystoneSyncDB[key]
+            if prev and prev.keystoneChallengeMapId == challengeMapId and prev.keystoneDungeon then
+                dungeonName = prev.keystoneDungeon
+            end
         end
     end
 
@@ -50,7 +55,6 @@ local function SaveCurrentKeystone(reason)
     KeystoneSyncDB[key].keystoneDungeon = dungeonName
     KeystoneSyncDB[key].updatedAt = time()
     KeystoneSyncDB[key].updatedReason = reason
-
 end
 
 local function PrintCurrentKeystone()
@@ -72,36 +76,8 @@ end
 frame:SetScript("OnEvent", function(self, event)
     if event == "PLAYER_LOGOUT" then
         SaveCurrentKeystone("PLAYER_LOGOUT")
-
     elseif event == "PLAYER_LOGIN" then
         SaveCurrentKeystone("PLAYER_LOGIN")
-        C_Timer.After(5, function()
-            SaveCurrentKeystone("PLAYER_LOGIN_5S")
-        end)
-
-    elseif event == "BAG_UPDATE_DELAYED" then
-        -- Detecta cuando WoW coloca una piedra nueva en el bag (ej: reset semanal)
-        -- Solo guarda si el nivel o la mazmorra cambió respecto a lo guardado
-        local key = GetCharacterKey()
-        local saved = KeystoneSyncDB and KeystoneSyncDB[key]
-        local currentLevel = C_MythicPlus.GetOwnedKeystoneLevel()
-        local currentMapId = C_MythicPlus.GetOwnedKeystoneChallengeMapID()
-        local savedLevel = saved and saved.keystoneLevel
-        local savedMapId = saved and saved.keystoneChallengeMapId
-        if currentLevel ~= savedLevel or currentMapId ~= savedMapId then
-            SaveCurrentKeystone("BAG_UPDATE")
-        end
-
-    elseif event == "CHALLENGE_MODE_COMPLETED" then
-        C_Timer.After(5, function()
-            SaveCurrentKeystone("CHALLENGE_MODE_COMPLETED_5S")
-        end)
-        C_Timer.After(10, function()
-            SaveCurrentKeystone("CHALLENGE_MODE_COMPLETED_10S")
-        end)
-        C_Timer.After(20, function()
-            SaveCurrentKeystone("CHALLENGE_MODE_COMPLETED_20S")
-        end)
     end
 end)
 
