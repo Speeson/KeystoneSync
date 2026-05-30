@@ -86,6 +86,23 @@ local function GetKeystoneFromBags()
     return nil, nil
 end
 
+local function CountItemInBags(itemID)
+    local total = 0
+    if not C_Container then return total end
+
+    for bag = 0, NUM_BAG_SLOTS do
+        local slots = C_Container.GetContainerNumSlots(bag) or 0
+        for slot = 1, slots do
+            local info = C_Container.GetContainerItemInfo(bag, slot)
+            if info and info.itemID == itemID then
+                total = total + (info.stackCount or 0)
+            end
+        end
+    end
+
+    return total
+end
+
 local function GetCurrentKeystone(prev)
     local level = C_MythicPlus.GetOwnedKeystoneLevel()
     local challengeMapId = C_MythicPlus.GetOwnedKeystoneChallengeMapID()
@@ -222,13 +239,17 @@ local function GetCurrencyData()
     end
 
     local sparkDust = result.radiantSparkDust
-    local sparkItemCount = C_Item.GetItemCount(SPARK_OF_RADIANCE_ITEM_ID, true) or 0
+    local sparkInventoryCount = CountItemInBags(SPARK_OF_RADIANCE_ITEM_ID)
+    local sparkTotalCount = C_Item.GetItemCount(SPARK_OF_RADIANCE_ITEM_ID, true) or 0
+    local sparkItemCount = math.max(sparkInventoryCount, sparkTotalCount)
 
     result.sparksOfRadiance = {
         itemID = SPARK_OF_RADIANCE_ITEM_ID,
         currencyID = RADIANT_SPARK_DUST_CURRENCY_ID,
         quantity = sparkItemCount,
         itemQuantity = sparkItemCount,
+        inventoryQuantity = sparkInventoryCount,
+        totalItemQuantity = sparkTotalCount,
         dustQuantity = sparkDust and (sparkDust.quantity or sparkDust.trackedQuantity or sparkDust.totalEarned) or 0,
         dustMaxQuantity = sparkDust and sparkDust.maxQuantity or 0,
         dustTotalEarned = sparkDust and sparkDust.totalEarned or 0,
