@@ -19,6 +19,7 @@ local CURRENCIES = {
 }
 
 local SPARK_OF_RADIANCE_ITEM_ID = 232875
+local RADIANT_SPARK_DUST_CURRENCY_ID = 3212
 
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("PLAYER_LOGIN")
@@ -220,9 +221,18 @@ local function GetCurrencyData()
         end
     end
 
+    local sparkDust = result.radiantSparkDust
+    local sparkItemCount = C_Item.GetItemCount(SPARK_OF_RADIANCE_ITEM_ID, true) or 0
+
     result.sparksOfRadiance = {
         itemID = SPARK_OF_RADIANCE_ITEM_ID,
-        quantity = C_Item.GetItemCount(SPARK_OF_RADIANCE_ITEM_ID, true) or 0,
+        currencyID = RADIANT_SPARK_DUST_CURRENCY_ID,
+        quantity = sparkItemCount,
+        itemQuantity = sparkItemCount,
+        dustQuantity = sparkDust and (sparkDust.quantity or sparkDust.trackedQuantity or sparkDust.totalEarned) or 0,
+        dustMaxQuantity = sparkDust and sparkDust.maxQuantity or 0,
+        dustTotalEarned = sparkDust and sparkDust.totalEarned or 0,
+        dustTrackedQuantity = sparkDust and sparkDust.trackedQuantity or 0,
         iconFileID = C_Item.GetItemIconByID(SPARK_OF_RADIANCE_ITEM_ID),
         iconPath = GetTexturePath(C_Item.GetItemIconByID(SPARK_OF_RADIANCE_ITEM_ID)),
     }
