@@ -2,6 +2,15 @@
 
 All notable changes to KeystoneSync will be documented here.
 
+## [0.1.8] - 2026-05-30
+
+### Added
+- Capture currency and dungeon icon metadata (`iconFileID`, `iconPath`, `texture`, `texturePath`) so external clients can render clearer summary tables.
+- Capture Mythic+ affix score data per dungeon using `C_MythicPlus.GetSeasonBestAffixScoreInfoForMap`, including `bestOverAllScore`, `bestAffixScore`, `affixScores`, `bestTimedRun`, and `bestNotTimedRun`.
+
+### Changed
+- Mythic+ dungeon `rating` and upgrade tier (`+1`, `+2`, `+3`) now prefer Blizzard's affix-score data, matching AlterEgo's source more closely.
+
 ## [0.1.7] - 2026-05-30
 
 ### Added
