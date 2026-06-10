@@ -2,10 +2,15 @@
 
 All notable changes to KeystoneSync will be documented here.
 
+## [0.1.10] - 2026-06-10
+
+### Fixed
+- Ignore transient `0` item-level reads from WoW and preserve the previous valid item level instead.
+
 ## [0.1.9] - 2026-06-10
 
 ### Added
-- Capture character item level directly from WoW via `GetAverageItemLevel()`, storing both `ilvl` and `equippedIlvl` in `KeystoneSyncDB`.
+- Capture character item level directly from WoW via `GetAverageItemLevel()`, storing `ilvl` in `KeystoneSyncDB`.
 
 ## [0.1.8] - 2026-05-30
 
