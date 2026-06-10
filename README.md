@@ -12,6 +12,8 @@ On every login and logout, KeystoneSync writes the current character's keystone 
 | `realm` | Realm name |
 | `region` | Region (default: `eu`) |
 | `hasKeystone` | Whether the character currently holds a keystone |
+| `ilvl` | Average item level reported by WoW |
+| `equippedIlvl` | Equipped item level reported by WoW |
 | `keystoneLevel` | Keystone level (e.g. `8`) |
 | `keystoneDungeon` | Dungeon name (e.g. `"The Stonevault"`) |
 | `keystoneChallengeMapId` | Challenge mode ID |

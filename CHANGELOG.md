@@ -2,6 +2,11 @@
 
 All notable changes to KeystoneSync will be documented here.
 
+## [0.1.9] - 2026-06-10
+
+### Added
+- Capture character item level directly from WoW via `GetAverageItemLevel()`, storing both `ilvl` and `equippedIlvl` in `KeystoneSyncDB`.
+
 ## [0.1.8] - 2026-05-30
 
 ### Added

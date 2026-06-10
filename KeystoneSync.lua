@@ -449,6 +449,15 @@ local function GetMythicPlusSeason()
     return result
 end
 
+local function GetItemLevelData()
+    local avgItemLevel, avgItemLevelEquipped = GetAverageItemLevel()
+
+    return {
+        ilvl = avgItemLevel and math.floor(avgItemLevel + 0.5) or nil,
+        equippedIlvl = avgItemLevelEquipped and math.floor(avgItemLevelEquipped + 0.5) or nil,
+    }
+end
+
 local function SaveCharacterData(reason)
     if UnitLevel("player") < MAX_LEVEL then return end
 
@@ -459,11 +468,14 @@ local function SaveCharacterData(reason)
     local key = GetCharacterKey()
     local prev = KeystoneSyncDB and KeystoneSyncDB[key]
     local keystone = GetCurrentKeystone(prev)
+    local itemLevel = GetItemLevelData()
 
     KeystoneSyncDB[key] = KeystoneSyncDB[key] or {}
     KeystoneSyncDB[key].character = character
     KeystoneSyncDB[key].realm = realm
     KeystoneSyncDB[key].region = REGION
+    KeystoneSyncDB[key].ilvl = itemLevel.ilvl
+    KeystoneSyncDB[key].equippedIlvl = itemLevel.equippedIlvl
     KeystoneSyncDB[key].hasKeystone = keystone.hasKeystone
     KeystoneSyncDB[key].keystoneLevel = keystone.level
     KeystoneSyncDB[key].keystoneChallengeMapId = keystone.challengeMapId
