@@ -147,20 +147,6 @@ local function GetCurrentKeystone(prev)
     }
 end
 
-local function CountCompletedQuests(ids)
-    local count = 0
-    local completed = {}
-
-    for _, questID in ipairs(ids) do
-        if C_QuestLog.IsQuestFlaggedCompleted(questID) then
-            count = count + 1
-            table.insert(completed, questID)
-        end
-    end
-
-    return count, completed
-end
-
 local function BuildRange(startId, endId, step)
     local ids = {}
     for questID = startId, endId, step or 1 do
@@ -175,6 +161,29 @@ local function AppendRange(target, startId, endId, step)
     end
 end
 
+local function CountPreyQuestSet(ids, questsCompleted)
+    local count = 0
+    local completed = {}
+
+    for _, questID in ipairs(ids) do
+        local isCompleted = C_QuestLog.IsQuestFlaggedCompleted(questID) == true
+        questsCompleted[questID] = isCompleted
+        if isCompleted then
+            count = count + 1
+            table.insert(completed, questID)
+        end
+    end
+
+    return count, completed
+end
+
+local function PreyTotal(preyHunts)
+    if not preyHunts then return 0 end
+    return (preyHunts.normal and preyHunts.normal.count or 0)
+        + (preyHunts.hard and preyHunts.hard.count or 0)
+        + (preyHunts.nightmare and preyHunts.nightmare.count or 0)
+end
+
 local function GetTexturePath(fileDataID)
     if not fileDataID or not C_Texture or not C_Texture.GetFilenameFromFileDataID then return nil end
 
@@ -186,10 +195,11 @@ local function GetTexturePath(fileDataID)
     return nil
 end
 
-local function GetPreyHunts()
+local function GetPreyHunts(prev)
     local normal = BuildRange(91095, 91124)
     local hard = {}
     local nightmare = {}
+    local questsCompleted = {}
 
     AppendRange(hard, 91210, 91240, 2)
     AppendRange(hard, 91242, 91255)
@@ -197,15 +207,24 @@ local function GetPreyHunts()
     AppendRange(nightmare, 91211, 91241, 2)
     AppendRange(nightmare, 91256, 91269)
 
-    local normalCount, normalCompleted = CountCompletedQuests(normal)
-    local hardCount, hardCompleted = CountCompletedQuests(hard)
-    local nightmareCount, nightmareCompleted = CountCompletedQuests(nightmare)
+    local normalCount, normalCompleted = CountPreyQuestSet(normal, questsCompleted)
+    local hardCount, hardCompleted = CountPreyQuestSet(hard, questsCompleted)
+    local nightmareCount, nightmareCompleted = CountPreyQuestSet(nightmare, questsCompleted)
 
-    return {
+    local result = {
+        questsCompleted = questsCompleted,
         normal = { count = normalCount, completedQuestIDs = normalCompleted },
         hard = { count = hardCount, completedQuestIDs = hardCompleted },
         nightmare = { count = nightmareCount, completedQuestIDs = nightmareCompleted },
     }
+
+    -- WoW can occasionally return an empty quest-completion snapshot during login/logout.
+    -- Do not overwrite a previously valid weekly Prey state with a transient all-zero read.
+    if PreyTotal(result) == 0 and prev and prev.preyHunts and PreyTotal(prev.preyHunts) > 0 then
+        return prev.preyHunts
+    end
+
+    return result
 end
 
 local function GetCurrencyData()
@@ -457,6 +476,19 @@ local function GetItemLevel(prev)
     return prev and prev.ilvl or nil
 end
 
+local function GetMoneyData(prev, reason)
+    local copper = GetMoney() or 0
+    if reason == "PLAYER_LOGOUT" and copper == 0 and prev and prev.money and prev.money.copper and prev.money.copper > 0 then
+        return prev.money
+    end
+    return {
+        copper = copper,
+        gold = math.floor(copper / 10000),
+        silver = math.floor((copper % 10000) / 100),
+        copperOnly = copper % 100,
+    }
+end
+
 local function SaveCharacterData(reason)
     if UnitLevel("player") < MAX_LEVEL then return end
 
@@ -480,8 +512,9 @@ local function SaveCharacterData(reason)
     KeystoneSyncDB[key].keystoneMapId = keystone.mapId
     KeystoneSyncDB[key].keystoneDungeon = keystone.dungeonName
     KeystoneSyncDB[key].vault = GetVaultData()
-    KeystoneSyncDB[key].preyHunts = GetPreyHunts()
+    KeystoneSyncDB[key].preyHunts = GetPreyHunts(prev)
     KeystoneSyncDB[key].currencies = GetCurrencyData()
+    KeystoneSyncDB[key].money = GetMoneyData(prev, reason)
     KeystoneSyncDB[key].mythicPlusSeason = GetMythicPlusSeason()
     KeystoneSyncDB[key].updatedAt = time()
     KeystoneSyncDB[key].updatedReason = reason

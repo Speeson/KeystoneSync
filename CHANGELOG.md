@@ -2,6 +2,22 @@
 
 All notable changes to KeystoneSync will be documented here.
 
+## [0.1.13] - 2026-06-14
+
+### Fixed
+- Improved Prey Hunts tracking by storing the full quest-completion map per character and deriving Normal, Hard, and Nightmare counts from that data.
+- Prevented transient all-zero Prey Hunt reads from overwriting a previously valid weekly Prey state during login/logout or early quest-log updates.
+
+## [0.1.12] - 2026-06-13
+
+### Fixed
+- Preserve the previous valid money value when WoW returns `0` during `PLAYER_LOGOUT`, avoiding logout overwrites after a correct `/ksync` or login capture.
+
+## [0.1.11] - 2026-06-13
+
+### Added
+- Capture character money from WoW via `GetMoney()`, storing total copper plus gold/silver/copper breakdown in `KeystoneSyncDB.money`.
+
 ## [0.1.10] - 2026-06-10
 
 ### Fixed
