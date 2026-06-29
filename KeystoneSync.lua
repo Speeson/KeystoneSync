@@ -4,6 +4,7 @@ local PREFIX = "[KeystoneSync]"
 -- Region hardcodeada. Cambiar a "us" si el servidor no es EU.
 local REGION = "eu"
 local MAX_LEVEL = 90
+local SEASON_CAPTURE_DELAY_SECONDS = 20
 
 local CURRENCIES = {
     { key = "adventurerDawncrest", id = 3383 },
@@ -20,6 +21,7 @@ local CURRENCIES = {
 
 local SPARK_OF_RADIANCE_ITEM_ID = 232875
 local RADIANT_SPARK_DUST_CURRENCY_ID = 3212
+local pendingSeasonCaptureKey = nil
 
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("PLAYER_LOGIN")
@@ -496,6 +498,87 @@ local function GetMythicPlusSeason()
     return result
 end
 
+local function CountSeasonRuns(season)
+    local count = 0
+    if not season or not season.dungeons then return count end
+
+    for _, dungeon in ipairs(season.dungeons) do
+        if dungeon.level and dungeon.level > 0 then
+            count = count + 1
+        end
+    end
+
+    return count
+end
+
+local function SeasonSignature(season)
+    if not season or not season.dungeons then return nil end
+
+    local parts = {}
+    for _, dungeon in ipairs(season.dungeons) do
+        if dungeon.level and dungeon.level > 0 then
+            local timed = dungeon.timed and "1" or "0"
+            local duration = dungeon.bestTimedRun and dungeon.bestTimedRun.durationSec or 0
+            table.insert(parts, table.concat({
+                tostring(dungeon.challengeMapId or 0),
+                tostring(dungeon.level or 0),
+                timed,
+                tostring(duration or 0),
+            }, ":"))
+        end
+    end
+
+    if #parts == 0 then return nil end
+    table.sort(parts)
+    return table.concat(parts, "|")
+end
+
+local function HasDuplicateSeasonSignature(currentKey, season)
+    local signature = SeasonSignature(season)
+    if not signature or not KeystoneSyncDB then return false end
+
+    for key, data in pairs(KeystoneSyncDB) do
+        if key ~= currentKey and data and SeasonSignature(data.mythicPlusSeason) == signature then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function ShouldAcceptMythicPlusSeason(currentKey, prev, season)
+    local newRuns = CountSeasonRuns(season)
+    local prevRuns = CountSeasonRuns(prev and prev.mythicPlusSeason)
+
+    if newRuns == 0 and prevRuns > 0 then
+        if HasDuplicateSeasonSignature(currentKey, prev and prev.mythicPlusSeason) then
+            return true
+        end
+        return false
+    end
+
+    if newRuns > 0 and HasDuplicateSeasonSignature(currentKey, season) then
+        local previousSignature = SeasonSignature(prev and prev.mythicPlusSeason)
+        if previousSignature and previousSignature == SeasonSignature(season) then
+            return true
+        end
+        return false
+    end
+
+    return true
+end
+
+local function UpdateMythicPlusSeason(key, prev)
+    local season = GetMythicPlusSeason()
+    if ShouldAcceptMythicPlusSeason(key, prev, season) then
+        KeystoneSyncDB[key].mythicPlusSeason = season
+        KeystoneSyncDB[key].mythicPlusSeasonUpdatedAt = time()
+    elseif prev and prev.mythicPlusSeason then
+        KeystoneSyncDB[key].mythicPlusSeason = prev.mythicPlusSeason
+        KeystoneSyncDB[key].mythicPlusSeasonUpdatedAt = prev.mythicPlusSeasonUpdatedAt
+    end
+end
+
 local function GetItemLevel(prev)
     local avgItemLevel = GetAverageItemLevel()
     if avgItemLevel and avgItemLevel > 0 then
@@ -517,7 +600,7 @@ local function GetMoneyData(prev, reason)
     }
 end
 
-local function SaveCharacterData(reason)
+local function SaveCharacterData(reason, updateSeason)
     if UnitLevel("player") < MAX_LEVEL then return end
 
     KeystoneSyncDB = KeystoneSyncDB or {}
@@ -543,7 +626,9 @@ local function SaveCharacterData(reason)
     KeystoneSyncDB[key].preyHunts = GetPreyHunts(prev)
     KeystoneSyncDB[key].currencies = GetCurrencyData()
     KeystoneSyncDB[key].money = GetMoneyData(prev, reason)
-    KeystoneSyncDB[key].mythicPlusSeason = GetMythicPlusSeason()
+    if updateSeason then
+        UpdateMythicPlusSeason(key, prev)
+    end
     KeystoneSyncDB[key].updatedAt = time()
     KeystoneSyncDB[key].updatedReason = reason
 end
@@ -564,16 +649,35 @@ local function PrintCurrentKeystone()
     end
 end
 
+local function ScheduleSeasonCapture()
+    if not C_Timer or not C_Timer.After then return end
+
+    local key = GetCharacterKey()
+    pendingSeasonCaptureKey = key
+
+    C_Timer.After(SEASON_CAPTURE_DELAY_SECONDS, function()
+        if pendingSeasonCaptureKey == key and GetCharacterKey() == key and UnitLevel("player") >= MAX_LEVEL then
+            SaveCharacterData("PLAYER_LOGIN_DELAYED_SEASON", true)
+        end
+    end)
+end
+
 frame:SetScript("OnEvent", function(self, event)
-    if event == "PLAYER_LOGOUT" or event == "PLAYER_LOGIN" then
-        SaveCharacterData(event)
+    if event == "PLAYER_LOGIN" then
+        SaveCharacterData(event, false)
+        ScheduleSeasonCapture()
+    elseif event == "PLAYER_LOGOUT" then
+        pendingSeasonCaptureKey = nil
+        SaveCharacterData(event, false)
+    elseif event == "CHALLENGE_MODE_COMPLETED" or event == "MYTHIC_PLUS_NEW_WEEKLY_RECORD" then
+        SaveCharacterData(event, true)
     else
-        SaveCharacterData(event)
+        SaveCharacterData(event, false)
     end
 end)
 
 SLASH_KEYSTONESYNC1 = "/ksync"
 SlashCmdList["KEYSTONESYNC"] = function()
-    SaveCharacterData("MANUAL_COMMAND")
+    SaveCharacterData("MANUAL_COMMAND", true)
     PrintCurrentKeystone()
 end

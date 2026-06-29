@@ -2,6 +2,12 @@
 
 All notable changes to KeystoneSync will be documented here.
 
+## [0.1.15] - 2026-06-29
+
+### Fixed
+- Mythic+ season dungeon bests are no longer overwritten during immediate login/logout snapshots. The addon now captures basic character data immediately, then reads `mythicPlusSeason` after a 20-second delayed login pass or from explicit reliable events such as `/ksync` and Mythic+ completion events.
+- Added safeguards against WoW Mythic+ cache contamination: empty season snapshots no longer wipe previous valid runs unless the previous block looks like a duplicated cache snapshot, and season blocks identical to another character are rejected unless they already belonged to the same character.
+
 ## [0.1.14] - 2026-06-29
 
 ### Fixed
