@@ -14,7 +14,7 @@ On every login and logout, KeystoneSync writes the current character's keystone 
 | `hasKeystone` | Whether the character currently holds a keystone |
 | `ilvl` | Average item level reported by WoW |
 | `money` | Character money from `GetMoney()`: total copper plus gold/silver/copper breakdown |
-| `preyHunts` | Weekly Prey Hunt completion data split by Normal, Hard, and Nightmare, including completed quest IDs and the full quest completion map |
+| `preyHunts` | Weekly Prey Hunt completion data split by Normal, Hard, and Nightmare, including completed quest IDs, the full quest completion map, and the weekly reset key |
 | `keystoneLevel` | Keystone level (e.g. `8`) |
 | `keystoneDungeon` | Dungeon name (e.g. `"The Stonevault"`) |
 | `keystoneChallengeMapId` | Challenge mode ID |

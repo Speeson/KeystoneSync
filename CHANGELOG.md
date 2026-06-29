@@ -2,6 +2,14 @@
 
 All notable changes to KeystoneSync will be documented here.
 
+## [0.1.14] - 2026-06-29
+
+### Fixed
+- Added a weekly reset key to Prey Hunts so transient all-zero quest reads are only preserved inside the same weekly reset window. When the Wednesday reset creates a legitimate `0/4` state, the addon now clears the previous week's Prey Hunt progress instead of keeping stale counts.
+
+### Changed
+- Great Vault snapshots now also include the weekly reset key for easier debugging and downstream display consistency.
+
 ## [0.1.13] - 2026-06-14
 
 ### Fixed

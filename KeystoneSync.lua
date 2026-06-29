@@ -184,6 +184,27 @@ local function PreyTotal(preyHunts)
         + (preyHunts.nightmare and preyHunts.nightmare.count or 0)
 end
 
+local function GetWeeklyResetKey()
+    local now = time()
+    local current = date("*t", now)
+    local daysSinceWednesday = (current.wday - 4) % 7
+    local resetDay = date("*t", now - (daysSinceWednesday * 86400))
+    local resetAt = time({
+        year = resetDay.year,
+        month = resetDay.month,
+        day = resetDay.day,
+        hour = 9,
+        min = 0,
+        sec = 0,
+    })
+
+    if now < resetAt then
+        resetAt = resetAt - (7 * 86400)
+    end
+
+    return date("%Y-%m-%d", resetAt)
+end
+
 local function GetTexturePath(fileDataID)
     if not fileDataID or not C_Texture or not C_Texture.GetFilenameFromFileDataID then return nil end
 
@@ -200,6 +221,7 @@ local function GetPreyHunts(prev)
     local hard = {}
     local nightmare = {}
     local questsCompleted = {}
+    local weekKey = GetWeeklyResetKey()
 
     AppendRange(hard, 91210, 91240, 2)
     AppendRange(hard, 91242, 91255)
@@ -212,6 +234,7 @@ local function GetPreyHunts(prev)
     local nightmareCount, nightmareCompleted = CountPreyQuestSet(nightmare, questsCompleted)
 
     local result = {
+        weekKey = weekKey,
         questsCompleted = questsCompleted,
         normal = { count = normalCount, completedQuestIDs = normalCompleted },
         hard = { count = hardCount, completedQuestIDs = hardCompleted },
@@ -219,8 +242,12 @@ local function GetPreyHunts(prev)
     }
 
     -- WoW can occasionally return an empty quest-completion snapshot during login/logout.
-    -- Do not overwrite a previously valid weekly Prey state with a transient all-zero read.
-    if PreyTotal(result) == 0 and prev and prev.preyHunts and PreyTotal(prev.preyHunts) > 0 then
+    -- Preserve it only inside the same weekly reset window, otherwise reset-week zeroes must win.
+    if PreyTotal(result) == 0
+        and prev
+        and prev.preyHunts
+        and prev.preyHunts.weekKey == weekKey
+        and PreyTotal(prev.preyHunts) > 0 then
         return prev.preyHunts
     end
 
@@ -282,6 +309,7 @@ end
 
 local function GetVaultData()
     local result = {
+        weekKey = GetWeeklyResetKey(),
         hasAvailableRewards = C_WeeklyRewards.HasAvailableRewards() == true,
         raid = { unlocked = 0, slots = {} },
         dungeons = { unlocked = 0, slots = {} },
