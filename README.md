@@ -12,6 +12,7 @@ On every login and logout, KeystoneSync writes the current character's keystone 
 | `realm` | Realm name |
 | `region` | Region (default: `eu`) |
 | `hasKeystone` | Whether the character currently holds a keystone |
+| `keystoneWeeklyResetKey` | EU weekly reset key for the saved keystone. Used to clear stale keystones after Wednesday reset |
 | `ilvl` | Average item level reported by WoW |
 | `money` | Character money from `GetMoney()`: total copper plus gold/silver/copper breakdown |
 | `preyHunts` | Weekly Prey Hunt completion data split by Normal, Hard, and Nightmare, including completed quest IDs, the full quest completion map, and the weekly reset key |

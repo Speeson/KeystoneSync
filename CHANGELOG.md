@@ -2,6 +2,12 @@
 
 All notable changes to KeystoneSync will be documented here.
 
+## [0.1.16] - 2026-08-02
+
+### Fixed
+- Current keystones are now tied to the EU weekly reset window. After the Wednesday 04:00 UTC reset, stale keystones from the previous week are cleared until the character logs in and receives a new keystone.
+- The weekly reset key now uses the EU reset timestamp in UTC instead of a fixed local 09:00 time, avoiding daylight-saving drift.
+
 ## [0.1.15] - 2026-06-29
 
 ### Fixed

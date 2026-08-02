@@ -105,7 +105,13 @@ local function CountItemInBags(itemID)
     return total
 end
 
+local GetWeeklyResetKey
+local GetWeeklyResetStart
+local UtcTimestamp
+
 local function GetCurrentKeystone(prev)
+    local weeklyResetKey = GetWeeklyResetKey()
+    local weeklyResetStart = GetWeeklyResetStart()
     local level = C_MythicPlus.GetOwnedKeystoneLevel()
     local challengeMapId = C_MythicPlus.GetOwnedKeystoneChallengeMapID()
     local mapId = C_MythicPlus.GetOwnedKeystoneMapID()
@@ -117,8 +123,15 @@ local function GetCurrentKeystone(prev)
     end
 
     local hasKeystone = (level ~= nil and level > 0)
+    local previousSameWeek = prev
+        and prev.hasKeystone
+        and prev.keystoneLevel
+        and (
+            prev.keystoneWeeklyResetKey == weeklyResetKey
+            or (not prev.keystoneWeeklyResetKey and prev.updatedAt and prev.updatedAt >= weeklyResetStart)
+        )
 
-    if not hasKeystone and prev and prev.hasKeystone and prev.keystoneLevel then
+    if not hasKeystone and previousSameWeek then
         level = prev.keystoneLevel
         challengeMapId = prev.keystoneChallengeMapId
         mapId = prev.keystoneMapId
@@ -146,6 +159,7 @@ local function GetCurrentKeystone(prev)
         challengeMapId = challengeMapId,
         mapId = mapId,
         dungeonName = dungeonName,
+        weeklyResetKey = weeklyResetKey,
     }
 end
 
@@ -186,16 +200,20 @@ local function PreyTotal(preyHunts)
         + (preyHunts.nightmare and preyHunts.nightmare.count or 0)
 end
 
-local function GetWeeklyResetKey()
+GetWeeklyResetKey = function()
+    return date("!%Y-%m-%d", GetWeeklyResetStart())
+end
+
+GetWeeklyResetStart = function()
     local now = time()
-    local current = date("*t", now)
+    local current = date("!*t", now)
     local daysSinceWednesday = (current.wday - 4) % 7
-    local resetDay = date("*t", now - (daysSinceWednesday * 86400))
-    local resetAt = time({
+    local resetDay = date("!*t", now - (daysSinceWednesday * 86400))
+    local resetAt = UtcTimestamp({
         year = resetDay.year,
         month = resetDay.month,
         day = resetDay.day,
-        hour = 9,
+        hour = 4,
         min = 0,
         sec = 0,
     })
@@ -204,7 +222,15 @@ local function GetWeeklyResetKey()
         resetAt = resetAt - (7 * 86400)
     end
 
-    return date("%Y-%m-%d", resetAt)
+    return resetAt
+end
+
+UtcTimestamp = function(utcDate)
+    local asLocal = time(utcDate)
+    local localFields = date("*t", asLocal)
+    local utcFields = date("!*t", asLocal)
+    local offset = time(localFields) - time(utcFields)
+    return asLocal + offset
 end
 
 local function GetTexturePath(fileDataID)
@@ -622,6 +648,7 @@ local function SaveCharacterData(reason, updateSeason)
     KeystoneSyncDB[key].keystoneChallengeMapId = keystone.challengeMapId
     KeystoneSyncDB[key].keystoneMapId = keystone.mapId
     KeystoneSyncDB[key].keystoneDungeon = keystone.dungeonName
+    KeystoneSyncDB[key].keystoneWeeklyResetKey = keystone.weeklyResetKey
     KeystoneSyncDB[key].vault = GetVaultData()
     KeystoneSyncDB[key].preyHunts = GetPreyHunts(prev)
     KeystoneSyncDB[key].currencies = GetCurrencyData()
