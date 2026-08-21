@@ -1,0 +1,359 @@
+name: Addon Build and Release
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: build-only, release-dry-run, or release.
+        required: false
+        default: build-only
+        type: string
+      version_bump:
+        description: auto, patch, minor, or major.
+        required: false
+        default: auto
+        type: string
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: build-only, release-dry-run, or release.
+        required: true
+        default: release-dry-run
+        type: choice
+        options:
+          - build-only
+          - release-dry-run
+          - release
+      version_bump:
+        description: auto, patch, minor, or major.
+        required: true
+        default: auto
+        type: choice
+        options:
+          - auto
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: read
+
+jobs:
+  build_or_dry_run:
+    name: Addon ${{ inputs.mode }}
+    if: inputs.mode != 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Validate inputs
+        run: |
+          case "${{ inputs.mode }}" in
+            build-only|release-dry-run) ;;
+            *) echo "Invalid non-release mode: ${{ inputs.mode }}" >&2; exit 1 ;;
+          esac
+          case "${{ inputs.version_bump }}" in
+            auto|patch|minor|major) ;;
+            *) echo "Invalid version_bump: ${{ inputs.version_bump }}" >&2; exit 1 ;;
+          esac
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Current version
+        id: version
+        run: |
+          version="$(python -c 'import sys; from pathlib import Path; sys.path.insert(0, "scripts"); from release_changes import read_addon_version; print(read_addon_version(Path("KeystoneSync.toc")))')"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${version}" >> "$GITHUB_OUTPUT"
+          echo "asset=KeystoneSync-v${version}.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Plan addon release
+        id: plan
+        if: inputs.mode == 'release-dry-run'
+        run: |
+          python scripts/release_changes.py plan --bump "${{ inputs.version_bump }}" --notes-out release-notes.md --json > release-plan.json
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          with open("release-plan.json", encoding="utf-8") as handle:
+              plan = json.load(handle)
+          print(f"version={plan['next_version']}")
+          print(f"tag={plan['tag']}")
+          print(f"asset={plan['asset']}")
+          PY
+
+      - name: Apply dry-run addon version
+        if: inputs.mode == 'release-dry-run'
+        run: python -c 'import json, sys; from pathlib import Path; sys.path.insert(0, "scripts"); from release_changes import update_toc_version; plan=json.load(open("release-plan.json", encoding="utf-8")); update_toc_version(Path("KeystoneSync.toc"), plan["next_version"])'
+
+      - name: Validate addon
+        run: python scripts/package_addon.py validate --version "${{ steps.plan.outputs.version || steps.version.outputs.version }}"
+
+      - name: Run tests
+        run: |
+          python -m compileall -q scripts tests
+          python -m unittest discover -s tests/deploy_impact
+          python -m unittest discover -s tests/release
+
+      - name: Package addon
+        run: python scripts/package_addon.py package --version "${{ steps.plan.outputs.version || steps.version.outputs.version }}" --output-dir dist --print-path
+
+      - name: Verify dry-run release consistency
+        if: inputs.mode == 'release-dry-run'
+        run: |
+          version="${{ steps.plan.outputs.version }}"
+          tag="${{ steps.plan.outputs.tag }}"
+          asset="${{ steps.plan.outputs.asset }}"
+          test "$tag" = "v${version}"
+          test "$asset" = "KeystoneSync-v${version}.zip"
+          test -f "dist/${asset}"
+
+      - name: Upload addon package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.plan.outputs.asset || steps.version.outputs.asset }}
+          path: dist/KeystoneSync-v*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Addon release
+    if: inputs.mode == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.release-meta.outputs.version }}
+      tag: ${{ steps.release-meta.outputs.tag }}
+      release_state: ${{ steps.release-state.outputs.state }}
+    steps:
+      - name: Validate inputs
+        run: |
+          case "${{ inputs.version_bump }}" in
+            auto|patch|minor|major) ;;
+            *) echo "Invalid version_bump: ${{ inputs.version_bump }}" >&2; exit 1 ;;
+          esac
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "Pull requests must never publish releases." >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Current version
+        id: version
+        run: |
+          version="$(python -c 'import sys; from pathlib import Path; sys.path.insert(0, "scripts"); from release_changes import read_addon_version; print(read_addon_version(Path("KeystoneSync.toc")))')"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Detect pending addon changesets
+        id: pending
+        run: |
+          count="$(python -c 'import sys; from pathlib import Path; sys.path.insert(0, "scripts"); from release_changes import load_changesets; print(len(load_changesets(Path.cwd(), "addon")))')"
+          echo "count=${count}" >> "$GITHUB_OUTPUT"
+
+      - name: Plan addon release
+        id: plan
+        if: steps.pending.outputs.count != '0'
+        run: |
+          python scripts/release_changes.py plan --bump "${{ inputs.version_bump }}" --notes-out release-notes.md --json > release-plan.json
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          with open("release-plan.json", encoding="utf-8") as handle:
+              plan = json.load(handle)
+          print(f"version={plan['next_version']}")
+          print(f"tag={plan['tag']}")
+          print(f"asset={plan['asset']}")
+          PY
+
+      - name: Set resume metadata
+        id: resume-meta
+        if: steps.pending.outputs.count == '0'
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          tag="${{ steps.version.outputs.tag }}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "asset=KeystoneSync-v${version}.zip" >> "$GITHUB_OUTPUT"
+          notes=".changes/releases/addon-${tag}.md"
+          if [[ -f "$notes" ]]; then
+            cp "$notes" release-notes.md
+          else
+            printf '# KeystoneSync %s\n\nRelease retomada para completar la publicacion del addon.\n' "$version" > release-notes.md
+          fi
+
+      - name: Release metadata
+        id: release-meta
+        run: |
+          version="${{ steps.plan.outputs.version }}${{ steps.resume-meta.outputs.version }}"
+          tag="${{ steps.plan.outputs.tag }}${{ steps.resume-meta.outputs.tag }}"
+          asset="${{ steps.plan.outputs.asset }}${{ steps.resume-meta.outputs.asset }}"
+          if [[ -z "$version" || -z "$tag" || -z "$asset" ]]; then
+            echo "Missing release metadata" >&2
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "asset=${asset}" >> "$GITHUB_OUTPUT"
+
+      - name: Check GitHub release state
+        id: release-state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.release-meta.outputs.tag }}"
+          asset="${{ steps.release-meta.outputs.asset }}"
+          tag_exists=false
+          release_exists=false
+          asset_exists=false
+          tag_version_matches=true
+
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            tag_exists=true
+            git fetch --depth=1 origin "refs/tags/${tag}:refs/tags/${tag}"
+            tag_version="$(git show "${tag}:KeystoneSync.toc" | awk -F': ' '/^## Version:/ {print $2; exit}')"
+            if [[ "$tag_version" != "${tag#v}" ]]; then
+              tag_version_matches=false
+            fi
+          fi
+
+          if release_json="$(gh release view "$tag" --json assets 2>/dev/null)"; then
+            release_exists=true
+            if RELEASE_JSON="$release_json" python - "$asset" <<'PY'
+          import json
+          import os
+          import sys
+          expected = sys.argv[1]
+          payload = json.loads(os.environ["RELEASE_JSON"])
+          sys.exit(0 if any(asset["name"] == expected for asset in payload.get("assets", [])) else 1)
+          PY
+            then
+              asset_exists=true
+            fi
+          fi
+
+          pending=false
+          if [[ "${{ steps.pending.outputs.count }}" != "0" ]]; then pending=true; fi
+          state_json="$(python - <<PY
+          import json, sys
+          sys.path.insert(0, "scripts")
+          from release_state import determine_release_state
+          state = determine_release_state(
+              pending_changesets=${pending},
+              tag_exists=${tag_exists},
+              release_exists=${release_exists},
+              asset_exists=${asset_exists},
+              tag_version_matches=${tag_version_matches},
+          )
+          print(json.dumps(state.__dict__))
+          PY
+          )"
+          echo "$state_json"
+          python - "$state_json" <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import sys
+          state = json.loads(sys.argv[1])
+          print(f"state={state['name']}")
+          print(f"should_prepare={str(state['should_prepare']).lower()}")
+          print(f"should_publish={str(state['should_publish']).lower()}")
+          print(f"reason={state['reason']}")
+          if state["name"] == "inconsistent":
+              raise SystemExit(state["reason"])
+          PY
+
+      - name: Prepare addon release files
+        if: steps.release-state.outputs.should_prepare == 'true'
+        run: python scripts/release_changes.py prepare --bump "${{ inputs.version_bump }}" --json > release-plan.json
+
+      - name: Apply resumed addon version
+        if: steps.pending.outputs.count != '0' && steps.release-state.outputs.should_prepare != 'true'
+        run: python -c 'import sys; from pathlib import Path; sys.path.insert(0, "scripts"); from release_changes import update_toc_version; update_toc_version(Path("KeystoneSync.toc"), "${{ steps.release-meta.outputs.version }}")'
+
+      - name: Checkout tag source for resume
+        if: steps.release-state.outputs.state == 'resume' || steps.release-state.outputs.state == 'complete'
+        run: git checkout "${{ steps.release-meta.outputs.tag }}"
+
+      - name: Validate addon
+        run: python scripts/package_addon.py validate --version "${{ steps.release-meta.outputs.version }}"
+
+      - name: Run tests
+        run: |
+          python -m compileall -q scripts tests
+          python -m unittest discover -s tests/deploy_impact
+          python -m unittest discover -s tests/release
+
+      - name: Package addon
+        run: python scripts/package_addon.py package --version "${{ steps.release-meta.outputs.version }}" --output-dir dist --print-path
+
+      - name: Verify release consistency
+        run: |
+          version="${{ steps.release-meta.outputs.version }}"
+          tag="${{ steps.release-meta.outputs.tag }}"
+          asset="${{ steps.release-meta.outputs.asset }}"
+          test "$tag" = "v${version}"
+          test "$asset" = "KeystoneSync-v${version}.zip"
+          test -f "dist/${asset}"
+
+      - name: Upload addon package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.release-meta.outputs.asset }}
+          path: dist/${{ steps.release-meta.outputs.asset }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Atomic push release commit and tag
+        if: steps.release-state.outputs.should_prepare == 'true'
+        run: |
+          version="${{ steps.release-meta.outputs.version }}"
+          tag="${{ steps.release-meta.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add KeystoneSync.toc .changes
+          git diff --cached --quiet && { echo "Release preparation produced no commit changes." >&2; exit 1; }
+          git commit -m "Release KeystoneSync ${version}"
+          git tag "$tag"
+          git push --atomic origin "HEAD:${{ github.ref_name }}" "refs/tags/${tag}"
+
+      - name: Publish or verify GitHub Release
+        if: steps.release-state.outputs.should_publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.release-meta.outputs.tag }}"
+          version="${{ steps.release-meta.outputs.version }}"
+          asset="${{ steps.release-meta.outputs.asset }}"
+          path="dist/${asset}"
+          delays=(2 5 10 20)
+
+          run_gh() {
+            local attempt=0
+            local output status
+            while true; do
+              set +e
+              output="$("$@" 2>&1)"
+              status=$?
+              set -e
+              if [[ $status -eq 0 ]]; then
+                printf '%s\n' "$output"
+                return 0
+              fi
+              if [[ ! "$output" =~ (500|502|503|504) || $attempt -ge ${#delays[@]} ]]; then
+                printf '%s\n' "$output" >&2
+                return "$status"
+              fi
+              sleep "${delays[$attempt]}"
+              attempt=$((attempt + 1))
+            done
+          }
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            run_gh gh release upload "$tag" "$path" --clobber
+          else
+            run_gh gh release create "$tag" "$path" --title "KeystoneSync ${version}" --notes-file release-notes.md
+          fi

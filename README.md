@@ -28,7 +28,7 @@ Only characters at level 90 or above are tracked.
 
 ## Installation
 
-1. Download the latest release.
+1. Download the dedicated addon release asset `KeystoneSync-vX.Y.Z.zip` from GitHub Releases.
 2. Extract the `KeystoneSync` folder into your WoW AddOns directory:
    ```
    World of Warcraft\_retail_\Interface\AddOns\KeystoneSync\
@@ -50,6 +50,12 @@ World of Warcraft\_retail_\WTF\Account\<ACCOUNT>\SavedVariables\KeystoneSync.lua
 ```
 
 This is the file external tools (e.g. [KeystoneClient](https://github.com/Speeson/weeklyChar)) poll to sync keystone data to a backend API and display it in a desktop client or web dashboard.
+
+## Release automation
+
+Addon releases are owned by this repository. A release-impacting addon change requires a Spanish changeset under `.changes/pending/*.json`. On qualifying pushes to `main`, GitHub Actions plans the bump, updates `KeystoneSync.toc`, packages `KeystoneSync-vX.Y.Z.zip` with root `KeystoneSync/`, and publishes the GitHub Release under tag `vX.Y.Z`.
+
+Build-only workflow/tooling changes validate and package the addon without publishing. KeystoneClient consumes only the dedicated `KeystoneSync-vX.Y.Z.zip` asset, not GitHub's automatic source archives.
 
 ## Compatibility
 

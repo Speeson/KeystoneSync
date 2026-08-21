@@ -1,0 +1,199 @@
+name: Addon Deploy Orchestrator
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: Optional base ref/SHA for changed-file detection.
+        required: false
+        type: string
+      head_ref:
+        description: Optional head ref/SHA. Defaults to the workflow SHA.
+        required: false
+        type: string
+      release_mode:
+        description: Addon release behavior for manual runs.
+        required: false
+        default: auto
+        type: choice
+        options:
+          - auto
+          - build-only
+          - release-dry-run
+          - release
+      version_bump:
+        description: auto, patch, minor, or major.
+        required: false
+        default: auto
+        type: choice
+        options:
+          - auto
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: read
+
+jobs:
+  impact:
+    name: Deployment Impact
+    runs-on: ubuntu-latest
+    outputs:
+      addon_build: ${{ steps.outputs.outputs.addon_build }}
+      addon_release: ${{ steps.outputs.outputs.addon_release }}
+      unknown_paths: ${{ steps.outputs.outputs.unknown_paths }}
+      changed_files: ${{ steps.outputs.outputs.changed_files }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine changed files
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+          INPUT_BASE_REF: ${{ inputs.base_ref }}
+          INPUT_HEAD_REF: ${{ inputs.head_ref }}
+        run: |
+          set -euo pipefail
+
+          head="${CURRENT_SHA}"
+          base=""
+
+          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
+            base="${PR_BASE_SHA}"
+            head="${PR_HEAD_SHA}"
+          elif [[ "${EVENT_NAME}" == "push" ]]; then
+            base="${PUSH_BEFORE}"
+          elif [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            head="${INPUT_HEAD_REF:-${CURRENT_SHA}}"
+            base="${INPUT_BASE_REF:-}"
+          fi
+
+          git fetch --no-tags --prune --depth=100 origin +refs/heads/*:refs/remotes/origin/* || true
+
+          if ! git cat-file -e "${head}^{commit}" 2>/dev/null; then
+            head="HEAD"
+          fi
+
+          if [[ -n "${base}" && "${base}" != "0000000000000000000000000000000000000000" ]] && git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            git diff --name-only "${base}" "${head}" > changed-files.txt
+          elif git rev-parse "${head}^" >/dev/null 2>&1; then
+            git diff --name-only "${head}^" "${head}" > changed-files.txt
+          else
+            git diff-tree --no-commit-id --name-only -r "${head}" > changed-files.txt
+          fi
+
+          sort -u changed-files.txt -o changed-files.txt
+          cat changed-files.txt
+
+      - name: Run Deployment Impact
+        run: |
+          python scripts/deploy_impact.py --stdin --json --strict --allow-empty < changed-files.txt > impact.json
+          cat impact.json
+
+      - name: Expose outputs
+        id: outputs
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+
+          with open("impact.json", encoding="utf-8") as handle:
+              impact = json.load(handle)
+          with open("changed-files.txt", encoding="utf-8") as handle:
+              changed_files = [line.strip() for line in handle if line.strip()]
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              for key in ("addon_build", "addon_release"):
+                  out.write(f"{key}={str(impact[key]).lower()}\n")
+              out.write(f"unknown_paths={json.dumps(impact['unknown_paths'])}\n")
+              out.write(f"changed_files={json.dumps(changed_files)}\n")
+          PY
+
+      - name: Summarize impact
+        run: |
+          {
+            echo "## Addon Deployment Impact"
+            echo
+            echo '```json'
+            cat impact.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  addon-build:
+    name: Addon build-only
+    needs: impact
+    if: >
+      (
+        needs.impact.outputs.addon_build == 'true' &&
+        needs.impact.outputs.addon_release != 'true'
+      ) ||
+      (github.event_name == 'workflow_dispatch' && inputs.release_mode == 'build-only')
+    uses: ./.github/workflows/release-addon.yml
+    with:
+      mode: build-only
+      version_bump: ${{ inputs.version_bump || 'auto' }}
+
+  addon-release-pr:
+    name: Addon release PR dry-run
+    needs: impact
+    if: github.event_name == 'pull_request' && needs.impact.outputs.addon_release == 'true'
+    uses: ./.github/workflows/release-addon.yml
+    with:
+      mode: release-dry-run
+      version_bump: auto
+
+  addon-release:
+    name: Addon release
+    needs: impact
+    if: >
+      (needs.impact.outputs.addon_release == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && inputs.release_mode == 'release')
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-addon.yml
+    with:
+      mode: release
+      version_bump: ${{ inputs.version_bump || 'auto' }}
+
+  addon-release-dry-run:
+    name: Addon release manual dry-run
+    needs: impact
+    if: github.event_name == 'workflow_dispatch' && inputs.release_mode == 'release-dry-run'
+    uses: ./.github/workflows/release-addon.yml
+    with:
+      mode: release-dry-run
+      version_bump: ${{ inputs.version_bump || 'auto' }}
+
+  summary:
+    name: Summary
+    needs:
+      - impact
+      - addon-build
+      - addon-release-pr
+      - addon-release
+      - addon-release-dry-run
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Final summary
+        run: |
+          echo "Impact job: ${{ needs.impact.result }}"
+          echo "Addon build job: ${{ needs.addon-build.result }}"
+          echo "Addon PR release plan job: ${{ needs.addon-release-pr.result }}"
+          echo "Addon release job: ${{ needs.addon-release.result }}"
+          echo "Addon manual dry-run job: ${{ needs.addon-release-dry-run.result }}"
+          echo "Changed files: ${{ needs.impact.outputs.changed_files }}"
+          echo "Unknown paths: ${{ needs.impact.outputs.unknown_paths }}"
