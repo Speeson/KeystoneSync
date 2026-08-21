@@ -1,0 +1,115 @@
+name: Addon Build
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: build-only or release-dry-run.
+        required: false
+        default: build-only
+        type: string
+      version_bump:
+        description: auto, patch, minor, or major.
+        required: false
+        default: auto
+        type: string
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: build-only or release-dry-run.
+        required: true
+        default: build-only
+        type: choice
+        options:
+          - build-only
+          - release-dry-run
+      version_bump:
+        description: auto, patch, minor, or major.
+        required: true
+        default: auto
+        type: choice
+        options:
+          - auto
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Addon ${{ inputs.mode }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Validate inputs
+        run: |
+          case "${{ inputs.mode }}" in
+            build-only|release-dry-run) ;;
+            *) echo "Invalid build mode: ${{ inputs.mode }}" >&2; exit 1 ;;
+          esac
+          case "${{ inputs.version_bump }}" in
+            auto|patch|minor|major) ;;
+            *) echo "Invalid version_bump: ${{ inputs.version_bump }}" >&2; exit 1 ;;
+          esac
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Current version
+        id: version
+        run: |
+          version="$(python -c 'import sys; from pathlib import Path; sys.path.insert(0, "scripts"); from release_changes import read_addon_version; print(read_addon_version(Path("KeystoneSync.toc")))')"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${version}" >> "$GITHUB_OUTPUT"
+          echo "asset=KeystoneSync-v${version}.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Plan addon release
+        id: plan
+        if: inputs.mode == 'release-dry-run'
+        run: |
+          python scripts/release_changes.py plan --bump "${{ inputs.version_bump }}" --notes-out release-notes.md --json > release-plan.json
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          with open("release-plan.json", encoding="utf-8") as handle:
+              plan = json.load(handle)
+          print(f"version={plan['next_version']}")
+          print(f"tag={plan['tag']}")
+          print(f"asset={plan['asset']}")
+          PY
+
+      - name: Apply dry-run addon version
+        if: inputs.mode == 'release-dry-run'
+        run: python -c 'import json, sys; from pathlib import Path; sys.path.insert(0, "scripts"); from release_changes import update_toc_version; plan=json.load(open("release-plan.json", encoding="utf-8")); update_toc_version(Path("KeystoneSync.toc"), plan["next_version"])'
+
+      - name: Validate addon
+        run: python scripts/package_addon.py validate --version "${{ steps.plan.outputs.version || steps.version.outputs.version }}"
+
+      - name: Run tests
+        run: |
+          python -m compileall -q scripts tests
+          python -m unittest discover -s tests/deploy_impact
+          python -m unittest discover -s tests/release
+
+      - name: Package addon
+        run: python scripts/package_addon.py package --version "${{ steps.plan.outputs.version || steps.version.outputs.version }}" --output-dir dist --print-path
+
+      - name: Verify dry-run release consistency
+        if: inputs.mode == 'release-dry-run'
+        run: |
+          version="${{ steps.plan.outputs.version }}"
+          tag="${{ steps.plan.outputs.tag }}"
+          asset="${{ steps.plan.outputs.asset }}"
+          test "$tag" = "v${version}"
+          test "$asset" = "KeystoneSync-v${version}.zip"
+          test -f "dist/${asset}"
+
+      - name: Upload addon package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.plan.outputs.asset || steps.version.outputs.asset }}
+          path: dist/KeystoneSync-v*.zip
+          if-no-files-found: error
+          retention-days: 14

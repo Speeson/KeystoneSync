@@ -141,7 +141,7 @@ jobs:
         needs.impact.outputs.addon_release != 'true'
       ) ||
       (github.event_name == 'workflow_dispatch' && inputs.release_mode == 'build-only')
-    uses: ./.github/workflows/release-addon.yml
+    uses: ./.github/workflows/build-addon.yml
     with:
       mode: build-only
       version_bump: ${{ inputs.version_bump || 'auto' }}
@@ -150,7 +150,7 @@ jobs:
     name: Addon release PR dry-run
     needs: impact
     if: github.event_name == 'pull_request' && needs.impact.outputs.addon_release == 'true'
-    uses: ./.github/workflows/release-addon.yml
+    uses: ./.github/workflows/build-addon.yml
     with:
       mode: release-dry-run
       version_bump: auto
@@ -172,7 +172,7 @@ jobs:
     name: Addon release manual dry-run
     needs: impact
     if: github.event_name == 'workflow_dispatch' && inputs.release_mode == 'release-dry-run'
-    uses: ./.github/workflows/release-addon.yml
+    uses: ./.github/workflows/build-addon.yml
     with:
       mode: release-dry-run
       version_bump: ${{ inputs.version_bump || 'auto' }}
