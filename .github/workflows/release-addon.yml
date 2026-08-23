@@ -157,16 +157,30 @@ jobs:
 
           pending=false
           if [[ "${{ steps.pending.outputs.count }}" != "0" ]]; then pending=true; fi
-          state_json="$(python - <<PY
-          import json, sys
+          state_json="$(python - "$pending" "$tag_exists" "$release_exists" "$asset_exists" "$tag_version_matches" <<'PY'
+          import json
+          import sys
+
           sys.path.insert(0, "scripts")
           from release_state import determine_release_state
+
+          def parse_bool(value: str) -> bool:
+              normalized = value.strip().lower()
+              if normalized == "true":
+                  return True
+              if normalized == "false":
+                  return False
+              raise ValueError(f"Invalid boolean: {value}")
+
+          pending, tag_exists, release_exists, asset_exists, tag_version_matches = map(
+              parse_bool, sys.argv[1:]
+          )
           state = determine_release_state(
-              pending_changesets=${pending},
-              tag_exists=${tag_exists},
-              release_exists=${release_exists},
-              asset_exists=${asset_exists},
-              tag_version_matches=${tag_version_matches},
+              pending_changesets=pending,
+              tag_exists=tag_exists,
+              release_exists=release_exists,
+              asset_exists=asset_exists,
+              tag_version_matches=tag_version_matches,
           )
           print(json.dumps(state.__dict__))
           PY
