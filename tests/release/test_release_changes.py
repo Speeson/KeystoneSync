@@ -103,6 +103,28 @@ class ReleaseChangesTests(unittest.TestCase):
         self.assertEqual(metadata["tag"], "v0.2.0")
         self.assertEqual(metadata["asset"], "KeystoneSync-v0.2.0.zip")
 
+    def test_historical_notes_use_only_the_requested_changelog_section(self):
+        changelog = """# Changelog
+
+## [0.1.16] - 2026-08-02
+
+### Fixed
+- Reset semanal corregido.
+
+## [0.1.15] - 2026-06-29
+
+### Fixed
+- Cambio anterior.
+"""
+        notes = release_changes.render_historical_notes(changelog, "0.1.16")
+        self.assertTrue(notes.startswith("# KeystoneSync 0.1.16\n"))
+        self.assertIn("Reset semanal corregido.", notes)
+        self.assertNotIn("Cambio anterior.", notes)
+
+    def test_historical_notes_fail_when_version_is_missing(self):
+        with self.assertRaises(release_changes.ChangesetError):
+            release_changes.render_historical_notes("# Changelog\n", "0.1.16")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -112,9 +112,22 @@ def validate_zip(zip_path: Path, expected_files: tuple[Path, ...], expected_vers
         missing = sorted(expected_names.difference(names))
         if missing:
             raise PackageError(f"ZIP missing expected files: {', '.join(missing)}")
+        unexpected = sorted(set(names).difference(expected_names))
+        if unexpected:
+            raise PackageError(f"ZIP contains unexpected files: {', '.join(unexpected)}")
         toc_text = archive.read("KeystoneSync/KeystoneSync.toc").decode("utf-8-sig")
     if f"## Version: {expected_version}" not in toc_text:
         raise PackageError("ZIP TOC Version does not match expected version")
+
+
+def validate_zip_against_source(zip_path: Path, root: Path, expected_version: str) -> None:
+    info = validate_toc(root, expected_version=expected_version)
+    validate_zip(zip_path, info.files, expected_version)
+    with zipfile.ZipFile(zip_path) as archive:
+        for rel in info.files:
+            name = f"KeystoneSync/{rel.as_posix()}"
+            if archive.read(name) != (root / rel).read_bytes():
+                raise PackageError(f"ZIP runtime file differs from source: {rel.as_posix()}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -122,18 +135,27 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     validate = sub.add_parser("validate")
     validate.add_argument("--version")
+    validate.add_argument("--source-root", default=Path.cwd(), type=Path)
     package = sub.add_parser("package")
     package.add_argument("--version")
+    package.add_argument("--source-root", default=Path.cwd(), type=Path)
     package.add_argument("--output-dir", default="dist", type=Path)
     package.add_argument("--print-path", action="store_true")
+    verify = sub.add_parser("verify-package")
+    verify.add_argument("--version", required=True)
+    verify.add_argument("--source-root", default=Path.cwd(), type=Path)
+    verify.add_argument("--zip", required=True, type=Path)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    root = Path.cwd()
+    root = args.source_root.resolve()
     if args.command == "validate":
         validate_toc(root, expected_version=args.version)
+        return 0
+    if args.command == "verify-package":
+        validate_zip_against_source(args.zip, root, args.version)
         return 0
     zip_path = package_addon(root, args.output_dir, version=args.version)
     if args.print_path:

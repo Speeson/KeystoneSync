@@ -57,6 +57,8 @@ Addon releases are owned by this repository. A release-impacting addon change re
 
 Build-only workflow/tooling changes validate and package the addon without publishing. KeystoneClient consumes only the dedicated `KeystoneSync-vX.Y.Z.zip` asset, not GitHub's automatic source archives.
 
+Release tooling always runs from the current release infrastructure on `main`. When a missing or incomplete GitHub Release is resumed for an existing historical tag, the workflow exports the immutable tagged addon source into a temporary directory and packages that exact runtime through the current validator; it never rewrites or globally checks out the historical tag.
+
 ## Compatibility
 
 | Field | Value |

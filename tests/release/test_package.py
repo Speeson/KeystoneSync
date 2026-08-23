@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -62,6 +63,83 @@ class PackageAddonTests(unittest.TestCase):
             archive.writestr("KeystoneSync.toc", "## Version: 0.1.16\n")
         with self.assertRaises(package_addon.PackageError):
             package_addon.validate_zip(bad_zip, (Path("KeystoneSync.toc"),), "0.1.16")
+
+    def test_cli_default_source_root_still_packages_current_directory(self):
+        output = self.tmp / "default-dist"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(REPO_ROOT / "scripts" / "package_addon.py"),
+                "package",
+                "--version",
+                "0.1.16",
+                "--output-dir",
+                str(output),
+            ],
+            cwd=self.tmp,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((output / "KeystoneSync-v0.1.16.zip").is_file())
+
+    def test_cli_explicit_source_root_packages_historical_tree(self):
+        output = self.tmp / "historical-dist"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(REPO_ROOT / "scripts" / "package_addon.py"),
+                "package",
+                "--source-root",
+                str(self.tmp),
+                "--version",
+                "0.1.16",
+                "--output-dir",
+                str(output),
+            ],
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with zipfile.ZipFile(output / "KeystoneSync-v0.1.16.zip") as archive:
+            self.assertEqual(
+                sorted(archive.namelist()),
+                ["KeystoneSync/KeystoneSync.lua", "KeystoneSync/KeystoneSync.toc"],
+            )
+
+    def test_cli_explicit_source_root_rejects_version_mismatch(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(REPO_ROOT / "scripts" / "package_addon.py"),
+                "validate",
+                "--source-root",
+                str(self.tmp),
+                "--version",
+                "0.1.15",
+            ],
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not match expected", result.stderr)
+
+    def test_package_verification_rejects_runtime_content_not_from_source(self):
+        zip_path = package_addon.package_addon(self.tmp, self.tmp / "dist", version="0.1.16")
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(
+                "KeystoneSync/KeystoneSync.toc",
+                (self.tmp / "KeystoneSync.toc").read_bytes(),
+            )
+            archive.writestr("KeystoneSync/KeystoneSync.lua", b"-- altered runtime\n")
+
+        with self.assertRaisesRegex(package_addon.PackageError, "differs from source"):
+            package_addon.validate_zip_against_source(zip_path, self.tmp, "0.1.16")
 
 
 if __name__ == "__main__":

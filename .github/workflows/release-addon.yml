@@ -104,12 +104,6 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "asset=KeystoneSync-v${version}.zip" >> "$GITHUB_OUTPUT"
-          notes=".changes/releases/addon-${tag}.md"
-          if [[ -f "$notes" ]]; then
-            cp "$notes" release-notes.md
-          else
-            printf '# KeystoneSync %s\n\nRelease retomada para completar la publicacion del addon.\n' "$version" > release-notes.md
-          fi
 
       - name: Release metadata
         id: release-meta
@@ -198,12 +192,35 @@ jobs:
         if: steps.pending.outputs.count != '0' && steps.release-state.outputs.should_prepare != 'true'
         run: python -c 'import sys; from pathlib import Path; sys.path.insert(0, "scripts"); from release_changes import update_toc_version; update_toc_version(Path("KeystoneSync.toc"), "${{ steps.release-meta.outputs.version }}")'
 
-      - name: Checkout tag source for resume
+      - name: Prepare historical release notes
         if: steps.release-state.outputs.state == 'resume' || steps.release-state.outputs.state == 'complete'
-        run: git checkout "${{ steps.release-meta.outputs.tag }}"
+        run: |
+          version="${{ steps.release-meta.outputs.version }}"
+          tag="${{ steps.release-meta.outputs.tag }}"
+          notes=".changes/releases/addon-${tag}.md"
+          if [[ -f "$notes" ]]; then
+            cp "$notes" release-notes.md
+          else
+            git show "${tag}:CHANGELOG.md" > "$RUNNER_TEMP/tag-changelog.md"
+            python scripts/release_changes.py historical-notes --version "$version" --changelog "$RUNNER_TEMP/tag-changelog.md" --output release-notes.md
+          fi
+
+      - name: Select exact addon source
+        id: addon-source
+        run: |
+          source_root="$GITHUB_WORKSPACE"
+          state="${{ steps.release-state.outputs.state }}"
+          if [[ "$state" == "resume" || "$state" == "complete" ]]; then
+            tag="${{ steps.release-meta.outputs.tag }}"
+            source_root="$RUNNER_TEMP/addon-source"
+            mkdir -p "$source_root"
+            git -c core.autocrlf=false archive "${tag}" | tar -x -C "$source_root"
+            echo "tag_commit=$(git rev-list -n 1 "$tag")" >> "$GITHUB_OUTPUT"
+          fi
+          echo "root=${source_root}" >> "$GITHUB_OUTPUT"
 
       - name: Validate addon
-        run: python scripts/package_addon.py validate --version "${{ steps.release-meta.outputs.version }}"
+        run: python scripts/package_addon.py validate --source-root "${{ steps.addon-source.outputs.root }}" --version "${{ steps.release-meta.outputs.version }}"
 
       - name: Run tests
         run: |
@@ -212,7 +229,10 @@ jobs:
           python -m unittest discover -s tests/release
 
       - name: Package addon
-        run: python scripts/package_addon.py package --version "${{ steps.release-meta.outputs.version }}" --output-dir dist --print-path
+        run: python scripts/package_addon.py package --source-root "${{ steps.addon-source.outputs.root }}" --version "${{ steps.release-meta.outputs.version }}" --output-dir dist --print-path
+
+      - name: Verify package matches selected source
+        run: python scripts/package_addon.py verify-package --source-root "${{ steps.addon-source.outputs.root }}" --version "${{ steps.release-meta.outputs.version }}" --zip "dist/${{ steps.release-meta.outputs.asset }}"
 
       - name: Verify release consistency
         run: |

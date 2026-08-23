@@ -22,6 +22,7 @@ CATEGORY_TITLES = {
 }
 SEMVER_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 VERSION_LINE_RE = re.compile(r"^(##\s*Version\s*:\s*)(\S+)(\s*)$")
+CHANGELOG_VERSION_RE = re.compile(r"^##\s+\[([^]]+)](?:\s+-\s+.*)?$")
 
 
 @dataclass(frozen=True)
@@ -204,6 +205,29 @@ def render_notes(plan: ReleasePlan) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def render_historical_notes(changelog: str, version: str) -> str:
+    parse_semver(version)
+    lines = changelog.splitlines()
+    start: int | None = None
+    end = len(lines)
+    for index, line in enumerate(lines):
+        match = CHANGELOG_VERSION_RE.match(line.strip())
+        if not match:
+            continue
+        if start is None and match.group(1) == version:
+            start = index + 1
+            continue
+        if start is not None:
+            end = index
+            break
+    if start is None:
+        raise ChangesetError(f"CHANGELOG.md is missing version {version}")
+    body = "\n".join(lines[start:end]).strip()
+    if not body:
+        raise ChangesetError(f"CHANGELOG.md version {version} has no release notes")
+    return f"# KeystoneSync {version}\n\n{body}\n"
+
+
 def plan_payload(plan: ReleasePlan) -> dict[str, object]:
     return {
         "component": "addon",
@@ -260,12 +284,21 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--bump", default="auto", choices=("auto", *ALLOWED_TYPES))
     prepare.add_argument("--json", action="store_true")
 
+    historical = sub.add_parser("historical-notes", help="Extract release notes for an immutable historical tag.")
+    historical.add_argument("--version", required=True)
+    historical.add_argument("--changelog", required=True, type=Path)
+    historical.add_argument("--output", required=True, type=Path)
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     root = Path.cwd()
+    if args.command == "historical-notes":
+        notes = render_historical_notes(args.changelog.read_text(encoding="utf-8-sig"), args.version)
+        args.output.write_text(notes, encoding="utf-8")
+        return 0
     if args.command == "validate":
         load_changesets(root, "addon")
         return 0
