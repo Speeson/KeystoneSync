@@ -1,0 +1,12 @@
+{
+  "component": "addon",
+  "current_version": "0.1.16",
+  "version": "0.2.0",
+  "bump": "minor",
+  "tag": "v0.2.0",
+  "release_name": "KeystoneSync 0.2.0",
+  "asset": "KeystoneSync-v0.2.0.zip",
+  "changesets": [
+    "midnight-season-2.json"
+  ]
+}
