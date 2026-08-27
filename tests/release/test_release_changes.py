@@ -19,7 +19,7 @@ class ReleaseChangesTests(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         (self.tmp / ".changes" / "pending").mkdir(parents=True)
         (self.tmp / ".changes" / "releases").mkdir(parents=True)
-        shutil.copy2(REPO_ROOT / "KeystoneSync.toc", self.tmp / "KeystoneSync.toc")
+        (self.tmp / "KeystoneSync.toc").write_text("## Version: 0.1.16\n", encoding="utf-8")
 
     def tearDown(self):
         shutil.rmtree(self.tmp)

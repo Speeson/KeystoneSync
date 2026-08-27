@@ -15,10 +15,21 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import package_addon  # noqa: E402
 
 
+TOC_FIXTURE = """## Interface: 120100
+## Title: KeystoneSync
+## Notes: Test fixture.
+## Author: Tests
+## Version: 0.1.16
+## SavedVariables: KeystoneSyncDB
+
+KeystoneSync.lua
+"""
+
+
 class PackageAddonTests(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
-        shutil.copy2(REPO_ROOT / "KeystoneSync.toc", self.tmp / "KeystoneSync.toc")
+        (self.tmp / "KeystoneSync.toc").write_text(TOC_FIXTURE, encoding="utf-8")
         shutil.copy2(REPO_ROOT / "KeystoneSync.lua", self.tmp / "KeystoneSync.lua")
         (self.tmp / "README.md").write_text("not packaged", encoding="utf-8")
         (self.tmp / "scripts").mkdir()
