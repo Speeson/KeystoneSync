@@ -7,20 +7,23 @@ local MAX_LEVEL = 90
 local SEASON_CAPTURE_DELAY_SECONDS = 20
 
 local CURRENCIES = {
-    { key = "adventurerDawncrest", id = 3383 },
-    { key = "veteranDawncrest", id = 3341 },
-    { key = "championDawncrest", id = 3343 },
-    { key = "heroDawncrest", id = 3345 },
-    { key = "mythDawncrest", id = 3347 },
-    { key = "dawnlightManaflux", id = 3378 },
-    { key = "radiantSparkDust", id = 3212 },
+    { key = "adventurerMistcrest", id = 3442 },
+    { key = "veteranMistcrest", id = 3443 },
+    { key = "championMistcrest", id = 3444 },
+    { key = "heroMistcrest", id = 3445 },
+    { key = "mythMistcrest", id = 3446 },
+    { key = "venomblightManaflux", id = 3465 },
+    { key = "tidalSparkDust", id = 3509 },
     { key = "cofferKeyShards", id = 3310 },
     { key = "restoredCofferKey", id = 3028 },
-    { key = "nebulousVoidcore", id = 3418 },
+    { key = "nebulousVoidcore", id = 3513 },
 }
 
-local SPARK_OF_RADIANCE_ITEM_ID = 232875
-local RADIANT_SPARK_DUST_CURRENCY_ID = 3212
+local SPARK_OF_TIDES_ITEM_ID = 274476
+local TIDAL_SPARK_DUST_CURRENCY_ID = 3509
+local TROVEHUNTERS_BOUNTY_ITEM_ID = 274374
+local TROVEHUNTERS_BOUNTY_QUEST_ID = 86371
+local TROVEHUNTERS_BOUNTY_BUFF_SPELL_ID = 1293799
 local pendingSeasonCaptureKey = nil
 
 local frame = CreateFrame("Frame")
@@ -256,6 +259,10 @@ local function GetPreyHunts(prev)
 
     AppendRange(nightmare, 91211, 91241, 2)
     AppendRange(nightmare, 91256, 91269)
+    table.insert(nightmare, 95021)
+    table.insert(nightmare, 95022)
+    table.insert(nightmare, 95023)
+    table.insert(nightmare, 95024)
 
     local normalCount, normalCompleted = CountPreyQuestSet(normal, questsCompleted)
     local hardCount, hardCompleted = CountPreyQuestSet(hard, questsCompleted)
@@ -282,7 +289,7 @@ local function GetPreyHunts(prev)
     return result
 end
 
-local function GetCurrencyData()
+local function GetCurrencyData(prev)
     local result = {}
 
     for _, currencyDef in ipairs(CURRENCIES) do
@@ -312,14 +319,14 @@ local function GetCurrencyData()
         end
     end
 
-    local sparkDust = result.radiantSparkDust
-    local sparkInventoryCount = CountItemInBags(SPARK_OF_RADIANCE_ITEM_ID)
-    local sparkTotalCount = C_Item.GetItemCount(SPARK_OF_RADIANCE_ITEM_ID, true) or 0
+    local sparkDust = result.tidalSparkDust
+    local sparkInventoryCount = CountItemInBags(SPARK_OF_TIDES_ITEM_ID)
+    local sparkTotalCount = C_Item.GetItemCount(SPARK_OF_TIDES_ITEM_ID, true) or 0
     local sparkItemCount = math.max(sparkInventoryCount, sparkTotalCount)
 
-    result.sparksOfRadiance = {
-        itemID = SPARK_OF_RADIANCE_ITEM_ID,
-        currencyID = RADIANT_SPARK_DUST_CURRENCY_ID,
+    result.sparksOfTides = {
+        itemID = SPARK_OF_TIDES_ITEM_ID,
+        currencyID = TIDAL_SPARK_DUST_CURRENCY_ID,
         quantity = sparkItemCount,
         itemQuantity = sparkItemCount,
         inventoryQuantity = sparkInventoryCount,
@@ -328,8 +335,47 @@ local function GetCurrencyData()
         dustMaxQuantity = sparkDust and sparkDust.maxQuantity or 0,
         dustTotalEarned = sparkDust and sparkDust.totalEarned or 0,
         dustTrackedQuantity = sparkDust and sparkDust.trackedQuantity or 0,
-        iconFileID = C_Item.GetItemIconByID(SPARK_OF_RADIANCE_ITEM_ID),
-        iconPath = GetTexturePath(C_Item.GetItemIconByID(SPARK_OF_RADIANCE_ITEM_ID)),
+        iconFileID = C_Item.GetItemIconByID(SPARK_OF_TIDES_ITEM_ID),
+        iconPath = GetTexturePath(C_Item.GetItemIconByID(SPARK_OF_TIDES_ITEM_ID)),
+    }
+
+    local bagCount = 0
+    local bagCountOK, rawBagCount = pcall(CountItemInBags, TROVEHUNTERS_BOUNTY_ITEM_ID)
+    if bagCountOK and (not issecretvalue or not issecretvalue(rawBagCount)) and type(rawBagCount) == "number" then
+        bagCount = rawBagCount
+    end
+
+    local hasBuff = false
+    if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+        local auraOK, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, TROVEHUNTERS_BOUNTY_BUFF_SPELL_ID)
+        hasBuff = auraOK and aura ~= nil and (not issecretvalue or not issecretvalue(aura))
+    end
+
+    local questCompleted = false
+    local questOK, questValue = pcall(C_QuestLog.IsQuestFlaggedCompleted, TROVEHUNTERS_BOUNTY_QUEST_ID)
+    if questOK and (not issecretvalue or not issecretvalue(questValue)) then
+        questCompleted = questValue == true
+    end
+
+    local weekKey = GetWeeklyResetKey()
+    local previousBounty = prev and prev.currencies and prev.currencies.trovehuntersBounty
+    if not questCompleted and previousBounty and previousBounty.weekKey == weekKey and previousBounty.questCompleted then
+        questCompleted = true
+    end
+
+    local iconFileID = nil
+    local iconOK, rawIconFileID = pcall(C_Item.GetItemIconByID, TROVEHUNTERS_BOUNTY_ITEM_ID)
+    if iconOK and (not issecretvalue or not issecretvalue(rawIconFileID)) and type(rawIconFileID) == "number" then
+        iconFileID = rawIconFileID
+    end
+    result.trovehuntersBounty = {
+        itemID = TROVEHUNTERS_BOUNTY_ITEM_ID,
+        bagCount = bagCount,
+        hasBuff = hasBuff,
+        questCompleted = questCompleted,
+        iconFileID = iconFileID,
+        iconPath = GetTexturePath(iconFileID),
+        weekKey = weekKey,
     }
 
     return result
@@ -651,7 +697,7 @@ local function SaveCharacterData(reason, updateSeason)
     KeystoneSyncDB[key].keystoneWeeklyResetKey = keystone.weeklyResetKey
     KeystoneSyncDB[key].vault = GetVaultData()
     KeystoneSyncDB[key].preyHunts = GetPreyHunts(prev)
-    KeystoneSyncDB[key].currencies = GetCurrencyData()
+    KeystoneSyncDB[key].currencies = GetCurrencyData(prev)
     KeystoneSyncDB[key].money = GetMoneyData(prev, reason)
     if updateSeason then
         UpdateMythicPlusSeason(key, prev)

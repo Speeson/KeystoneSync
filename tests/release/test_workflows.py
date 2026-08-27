@@ -55,6 +55,17 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertFalse(state["should_prepare"])
         self.assertTrue(state["should_publish"])
 
+    def test_automatic_release_is_gated_without_blocking_manual_release(self):
+        workflow = (REPO_ROOT / ".github" / "workflows" / "deploy.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("vars.ADDON_RELEASE_ENABLED == 'true'", workflow)
+        self.assertIn(
+            "(github.event_name == 'workflow_dispatch' && inputs.release_mode == 'release')",
+            workflow,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,4 @@
-## Interface: 120005
+## Interface: 120100
 ## Title: KeystoneSync
 ## Notes: Guarda la piedra mitica+ actual del personaje en SavedVariables.
 ## Author: Esteban

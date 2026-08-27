@@ -1,0 +1,10 @@
+{
+  "components": ["addon"],
+  "type": "minor",
+  "category": "changed",
+  "summary": "Actualiza KeystoneSync para Midnight Temporada 2.",
+  "details": [
+    "Sustituye las monedas y la Chispa de Temporada 1 por sus equivalentes de Temporada 2.",
+    "Amplía las misiones de Presa de Pesadilla y registra el estado semanal de Trovehunter's Bounty."
+  ]
+}

@@ -16,6 +16,7 @@ On every login and logout, KeystoneSync writes the current character's keystone 
 | `ilvl` | Average item level reported by WoW |
 | `money` | Character money from `GetMoney()`: total copper plus gold/silver/copper breakdown |
 | `preyHunts` | Weekly Prey Hunt completion data split by Normal, Hard, and Nightmare, including completed quest IDs, the full quest completion map, and the weekly reset key |
+| `currencies` | Midnight Season 2 Mistcrests, Venomblight Manaflux, Tidal Spark Dust, Spark of Tides, keys, Nebulous Voidcore, and Trovehunter's Bounty bag/buff/weekly completion state |
 | `mythicPlusSeason` | Current-season Mythic+ dungeon bests. Captured after a delayed login pass or reliable Mythic+ events to avoid stale WoW cache data from another character |
 | `keystoneLevel` | Keystone level (e.g. `8`) |
 | `keystoneDungeon` | Dungeon name (e.g. `"The Stonevault"`) |
@@ -53,7 +54,7 @@ This is the file external tools (e.g. [KeystoneClient](https://github.com/Speeso
 
 ## Release automation
 
-Addon releases are owned by this repository. A release-impacting addon change requires a Spanish changeset under `.changes/pending/*.json`. On qualifying pushes to `main`, GitHub Actions plans the bump, updates `KeystoneSync.toc`, packages `KeystoneSync-vX.Y.Z.zip` with root `KeystoneSync/`, and publishes the GitHub Release under tag `vX.Y.Z`.
+Addon releases are owned by this repository. A release-impacting addon change requires a Spanish changeset under `.changes/pending/*.json`. On qualifying pushes to `main`, GitHub Actions publishes automatically only when the `ADDON_RELEASE_ENABLED` repository variable is `true`. Manual `workflow_dispatch` releases remain available independently of that automatic-release gate. Release automation plans the bump, updates `KeystoneSync.toc`, packages `KeystoneSync-vX.Y.Z.zip` with root `KeystoneSync/`, and publishes the GitHub Release under tag `vX.Y.Z`.
 
 Build-only workflow/tooling changes validate and package the addon without publishing. KeystoneClient consumes only the dedicated `KeystoneSync-vX.Y.Z.zip` asset, not GitHub's automatic source archives.
 
@@ -63,7 +64,7 @@ Release tooling always runs from the current release infrastructure on `main`. W
 
 | Field | Value |
 |---|---|
-| Interface | 120005 (The War Within, patch 12.0.5) |
+| Interface | 120100 (Midnight, patch 12.1) |
 | Retail only | Yes |
 
 ## Changelog
