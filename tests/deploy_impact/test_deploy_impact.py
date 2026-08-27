@@ -5,6 +5,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -28,7 +29,8 @@ class DeployImpactTests(unittest.TestCase):
         self.assertImpact(["KeystoneSync.lua"], {"addon_build", "addon_release"})
 
     def test_functional_toc_impacts_build_and_release(self):
-        self.assertImpact(["KeystoneSync.toc"], {"addon_build", "addon_release"})
+        with patch.object(deploy_impact, "is_toc_version_only_diff", return_value=False):
+            self.assertImpact(["KeystoneSync.toc"], {"addon_build", "addon_release"})
 
     def test_version_only_toc_change_is_no_release(self):
         impact = self.assertImpact(["KeystoneSync.toc"], set(), toc_version_only=True)
