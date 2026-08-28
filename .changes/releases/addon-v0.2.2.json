@@ -1,0 +1,12 @@
+{
+  "component": "addon",
+  "current_version": "0.2.1",
+  "version": "0.2.2",
+  "bump": "patch",
+  "tag": "v0.2.2",
+  "release_name": "KeystoneSync 0.2.2",
+  "asset": "KeystoneSync-v0.2.2.zip",
+  "changesets": [
+    "addon-icon.json"
+  ]
+}
