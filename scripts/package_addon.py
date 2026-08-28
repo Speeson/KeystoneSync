@@ -10,6 +10,8 @@ from pathlib import Path
 
 SEMVER_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 
+ICON_FILE = "icon.tga"
+
 
 class PackageError(ValueError):
     pass
@@ -83,6 +85,11 @@ def package_addon(root: Path, output_dir: Path, *, version: str | None = None) -
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(root / rel, target)
 
+    icon = root / ICON_FILE
+    has_icon = icon.is_file()
+    if has_icon:
+        shutil.copy2(icon, staging / ICON_FILE)
+
     asset_name = f"KeystoneSync-v{info.version}.zip"
     zip_path = output_dir / asset_name
     if zip_path.exists():
@@ -92,11 +99,11 @@ def package_addon(root: Path, output_dir: Path, *, version: str | None = None) -
             if path.is_file():
                 archive.write(path, path.relative_to(output_dir).as_posix())
 
-    validate_zip(zip_path, info.files, info.version)
+    validate_zip(zip_path, info.files, info.version, has_icon=has_icon)
     return zip_path
 
 
-def validate_zip(zip_path: Path, expected_files: tuple[Path, ...], expected_version: str) -> None:
+def validate_zip(zip_path: Path, expected_files: tuple[Path, ...], expected_version: str, *, has_icon: bool = False) -> None:
     if not zip_path.is_file():
         raise PackageError(f"Missing ZIP: {zip_path}")
     expected_asset = f"KeystoneSync-v{expected_version}.zip"
@@ -109,6 +116,8 @@ def validate_zip(zip_path: Path, expected_files: tuple[Path, ...], expected_vers
         if any(not name.startswith("KeystoneSync/") for name in names):
             raise PackageError("ZIP entries must stay under KeystoneSync/")
         expected_names = {f"KeystoneSync/{rel.as_posix()}" for rel in expected_files}
+        if has_icon:
+            expected_names.add(f"KeystoneSync/{ICON_FILE}")
         missing = sorted(expected_names.difference(names))
         if missing:
             raise PackageError(f"ZIP missing expected files: {', '.join(missing)}")
@@ -122,12 +131,18 @@ def validate_zip(zip_path: Path, expected_files: tuple[Path, ...], expected_vers
 
 def validate_zip_against_source(zip_path: Path, root: Path, expected_version: str) -> None:
     info = validate_toc(root, expected_version=expected_version)
-    validate_zip(zip_path, info.files, expected_version)
+    icon = root / ICON_FILE
+    has_icon = icon.is_file()
+    validate_zip(zip_path, info.files, expected_version, has_icon=has_icon)
     with zipfile.ZipFile(zip_path) as archive:
         for rel in info.files:
             name = f"KeystoneSync/{rel.as_posix()}"
             if archive.read(name) != (root / rel).read_bytes():
                 raise PackageError(f"ZIP runtime file differs from source: {rel.as_posix()}")
+        if has_icon:
+            name = f"KeystoneSync/{ICON_FILE}"
+            if archive.read(name) != icon.read_bytes():
+                raise PackageError(f"ZIP runtime file differs from source: {ICON_FILE}")
 
 
 def build_parser() -> argparse.ArgumentParser:

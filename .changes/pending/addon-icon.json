@@ -1,0 +1,9 @@
+{
+  "components": ["addon"],
+  "type": "patch",
+  "category": "added",
+  "summary": "Añade un icono al addon para la lista de AddOns de WoW.",
+  "details": [
+    "Se incluye icon.tga y la directiva IconTexture en el .toc para mostrar un icono del addon."
+  ]
+}

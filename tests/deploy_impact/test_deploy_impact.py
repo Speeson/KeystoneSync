@@ -54,6 +54,9 @@ class DeployImpactTests(unittest.TestCase):
     def test_future_runtime_file_impacts_release(self):
         self.assertImpact(["Frames.xml", "modules/example.lua"], {"addon_build", "addon_release"})
 
+    def test_image_asset_impacts_build_and_release(self):
+        self.assertImpact(["icon.tga", "Textures/icon.blp", "art.png"], {"addon_build", "addon_release"})
+
     def test_unknown_path_is_reported(self):
         impact = self.assertImpact(["unknown/config.toml"], set())
         self.assertEqual(impact.unknown_paths, ["unknown/config.toml"])

@@ -57,6 +57,28 @@ class PackageAddonTests(unittest.TestCase):
         with zipfile.ZipFile(zip_path) as archive:
             self.assertIn("KeystoneSync/Extra.lua", archive.namelist())
 
+    def test_package_includes_addon_icon_when_present(self):
+        (self.tmp / "icon.tga").write_bytes(b"fake-tga-bytes")
+        zip_path = package_addon.package_addon(self.tmp, self.tmp / "dist", version="0.1.16")
+        with zipfile.ZipFile(zip_path) as archive:
+            names = sorted(archive.namelist())
+        self.assertIn("KeystoneSync/icon.tga", names)
+
+    def test_package_omits_icon_when_absent(self):
+        zip_path = package_addon.package_addon(self.tmp, self.tmp / "dist", version="0.1.16")
+        with zipfile.ZipFile(zip_path) as archive:
+            self.assertNotIn("KeystoneSync/icon.tga", archive.namelist())
+
+    def test_package_verification_rejects_tampered_icon(self):
+        (self.tmp / "icon.tga").write_bytes(b"original-icon")
+        zip_path = package_addon.package_addon(self.tmp, self.tmp / "dist", version="0.1.16")
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("KeystoneSync/KeystoneSync.toc", (self.tmp / "KeystoneSync.toc").read_bytes())
+            archive.writestr("KeystoneSync/KeystoneSync.lua", (self.tmp / "KeystoneSync.lua").read_bytes())
+            archive.writestr("KeystoneSync/icon.tga", b"tampered")
+        with self.assertRaisesRegex(package_addon.PackageError, "differs from source"):
+            package_addon.validate_zip_against_source(zip_path, self.tmp, "0.1.16")
+
     def test_missing_toc_loaded_file_fails(self):
         toc = self.tmp / "KeystoneSync.toc"
         toc.write_text(toc.read_text(encoding="utf-8-sig") + "\nMissing.lua\n", encoding="utf-8")

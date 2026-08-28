@@ -123,7 +123,7 @@ def classify_path(path: str, impact: Impact, *, repo_root: Path, toc_version_onl
         impact.no_impact(path)
         return
 
-    if path.endswith((".lua", ".xml")):
+    if path.endswith((".lua", ".xml", ".tga", ".blp", ".png")):
         impact.add(("addon_build", "addon_release"), path)
         return
 
