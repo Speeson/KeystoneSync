@@ -1,0 +1,10 @@
+{
+  "components": ["addon"],
+  "type": "patch",
+  "category": "added",
+  "summary": "Integra de forma opcional la lista de deseos de KeystoneLoot.",
+  "details": [
+    "Guarda favoritos normalizados y el estado de Voidcore del personaje actual en SavedVariables.",
+    "KeystoneSync sigue funcionando aunque KeystoneLoot no esté disponible, listo o use una API incompatible."
+  ]
+}

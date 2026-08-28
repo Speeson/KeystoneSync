@@ -18,6 +18,7 @@ On every login and logout, KeystoneSync writes the current character's keystone 
 | `preyHunts` | Weekly Prey Hunt completion data split by Normal, Hard, and Nightmare, including completed quest IDs, the full quest completion map, and the weekly reset key |
 | `currencies` | Midnight Season 2 Mistcrests, Venomblight Manaflux, Tidal Spark Dust, Spark of Tides, keys, Nebulous Voidcore, and Trovehunter's Bounty bag/buff/weekly completion state |
 | `mythicPlusSeason` | Current-season Mythic+ dungeon bests. Captured after a delayed login pass or reliable Mythic+ events to avoid stale WoW cache data from another character |
+| `keystoneLoot` | Optional local snapshot of the current character's KeystoneLoot wishlist and Voidcore state, including explicit availability/API status |
 | `keystoneLevel` | Keystone level (e.g. `8`) |
 | `keystoneDungeon` | Dungeon name (e.g. `"The Stonevault"`) |
 | `keystoneChallengeMapId` | Challenge mode ID |
@@ -26,6 +27,32 @@ On every login and logout, KeystoneSync writes the current character's keystone 
 | `updatedReason` | Event that triggered the save (`PLAYER_LOGIN`, `PLAYER_LOGOUT`, `MANUAL_COMMAND`) |
 
 Only characters at level 90 or above are tracked.
+
+## Optional KeystoneLoot integration
+
+[KeystoneLoot](https://github.com/Wolkenschutz/KeystoneLoot) is an optional dependency.
+KeystoneSync continues saving its normal data when KeystoneLoot is missing, disabled, not
+ready, incompatible, or returns no favorites.
+
+For each current character processed by KeystoneSync, the local-only
+`KeystoneSyncDB[key].keystoneLoot` block uses one of these states:
+
+- `not_installed`
+- `installed_not_ready`
+- `supported`
+- `unsupported_api`
+
+A supported snapshot contains the detected API/addon versions, KeystoneLoot's current
+character key, capture timestamp, normalized favorites, and read-only Voidcore state.
+Favorite identity uses `sourceId`, `specId`, `itemId`, and numeric `tier`; optional
+enrichment includes `sourceType`, `slotId`, `icon`, `bonusIds`, `gems`, and `enchant`.
+Dungeon `sourceId` values remain KeystoneLoot challenge mode IDs. Voidcore `usedItems` is
+a sorted list of numeric item IDs marked as used.
+
+An empty `favorites = {}` from a supported, ready KeystoneLoot API is authoritative and
+replaces an older wishlist. KeystoneSync never backfills historical character entries
+with the logged-in character's KeystoneLoot data. This V1-A block is not yet transported
+through KeystoneClient, Worker, D1, or Web.
 
 ## Installation
 
@@ -43,6 +70,8 @@ Only characters at level 90 or above are tracked.
 ```
 
 Forces an immediate save and prints the stored keystone for the current character in the chat window.
+When available, the same save performs exactly one KeystoneLoot refresh and prints one
+concise integration diagnostic without listing wishlist items.
 
 ## SavedVariables location
 

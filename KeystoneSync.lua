@@ -1,5 +1,6 @@
-local ADDON_NAME = "KeystoneSync"
+local ADDON_NAME, KeystoneSync = ...
 local PREFIX = "[KeystoneSync]"
+local KeystoneLootIntegration = KeystoneSync and KeystoneSync.KeystoneLootIntegration
 
 -- Region hardcodeada. Cambiar a "us" si el servidor no es EU.
 local REGION = "eu"
@@ -25,6 +26,50 @@ local TROVEHUNTERS_BOUNTY_ITEM_ID = 274374
 local TROVEHUNTERS_BOUNTY_QUEST_ID = 86371
 local TROVEHUNTERS_BOUNTY_BUFF_SPELL_ID = 1293799
 local pendingSeasonCaptureKey = nil
+local GetCharacterKey
+
+local function RefreshKeystoneLoot()
+    if not KeystoneLootIntegration or type(KeystoneLootIntegration.RefreshCurrent) ~= "function" then
+        return nil
+    end
+
+    local ok, snapshot = pcall(KeystoneLootIntegration.RefreshCurrent, KeystoneLootIntegration)
+    if ok then
+        return snapshot
+    end
+    return nil
+end
+
+local function StartKeystoneLootIntegration()
+    if not KeystoneLootIntegration or type(KeystoneLootIntegration.Start) ~= "function" then
+        return nil
+    end
+
+    local ok, snapshot = pcall(KeystoneLootIntegration.Start, KeystoneLootIntegration, GetCharacterKey)
+    if ok then
+        return snapshot
+    end
+    return nil
+end
+
+local function StopKeystoneLootIntegration()
+    if not KeystoneLootIntegration or type(KeystoneLootIntegration.Stop) ~= "function" then
+        return
+    end
+
+    pcall(KeystoneLootIntegration.Stop, KeystoneLootIntegration)
+end
+
+local function PrintKeystoneLootDiagnostic(snapshot)
+    if not KeystoneLootIntegration or type(KeystoneLootIntegration.FormatDiagnostic) ~= "function" then
+        return
+    end
+
+    local ok, message = pcall(KeystoneLootIntegration.FormatDiagnostic, KeystoneLootIntegration, snapshot)
+    if ok and type(message) == "string" and message ~= "" then
+        print(PREFIX .. " " .. message)
+    end
+end
 
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("PLAYER_LOGIN")
@@ -37,7 +82,7 @@ frame:RegisterEvent("QUEST_LOG_UPDATE")
 frame:RegisterEvent("BAG_UPDATE_DELAYED")
 frame:RegisterEvent("CHALLENGE_MODE_COMPLETED")
 
-local function GetCharacterKey()
+GetCharacterKey = function()
     local character = UnitName("player")
     local realm = GetRealmName()
     return realm .. "-" .. character
@@ -677,7 +722,7 @@ local function GetMoneyData(prev, reason)
     }
 end
 
-local function SaveCharacterData(reason, updateSeason)
+local function SaveCharacterData(reason, updateSeason, refreshKeystoneLoot)
     if UnitLevel("player") < MAX_LEVEL then return end
 
     KeystoneSyncDB = KeystoneSyncDB or {}
@@ -709,6 +754,11 @@ local function SaveCharacterData(reason, updateSeason)
     end
     KeystoneSyncDB[key].updatedAt = time()
     KeystoneSyncDB[key].updatedReason = reason
+
+    if refreshKeystoneLoot ~= false then
+        return RefreshKeystoneLoot()
+    end
+    return nil
 end
 
 local function PrintCurrentKeystone()
@@ -742,11 +792,13 @@ end
 
 frame:SetScript("OnEvent", function(self, event)
     if event == "PLAYER_LOGIN" then
-        SaveCharacterData(event, false)
+        SaveCharacterData(event, false, false)
+        StartKeystoneLootIntegration()
         ScheduleSeasonCapture()
     elseif event == "PLAYER_LOGOUT" then
         pendingSeasonCaptureKey = nil
         SaveCharacterData(event, false)
+        StopKeystoneLootIntegration()
     elseif event == "CHALLENGE_MODE_COMPLETED" or event == "MYTHIC_PLUS_NEW_WEEKLY_RECORD" then
         SaveCharacterData(event, true)
     else
@@ -756,6 +808,7 @@ end)
 
 SLASH_KEYSTONESYNC1 = "/ksync"
 SlashCmdList["KEYSTONESYNC"] = function()
-    SaveCharacterData("MANUAL_COMMAND", true)
+    local keystoneLootSnapshot = SaveCharacterData("MANUAL_COMMAND", true)
     PrintCurrentKeystone()
+    PrintKeystoneLootDiagnostic(keystoneLootSnapshot)
 end
