@@ -4,6 +4,8 @@
 ## Author: Esteban
 ## Version: 0.2.2
 ## SavedVariables: KeystoneSyncDB
+## OptionalDeps: KeystoneLoot
 ## IconTexture: Interface\AddOns\KeystoneSync\icon
 
+KeystoneLootIntegration.lua
 KeystoneSync.lua
