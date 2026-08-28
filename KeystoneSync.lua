@@ -16,7 +16,7 @@ local CURRENCIES = {
     { key = "tidalSparkDust", id = 3509 },
     { key = "cofferKeyShards", id = 3310 },
     { key = "restoredCofferKey", id = 3028 },
-    { key = "nebulousVoidcore", id = 3513 },
+    { key = "nebulousVoidcore", id = 3513, quantityId = 3418 },
 }
 
 local SPARK_OF_TIDES_ITEM_ID = 274476
@@ -300,10 +300,15 @@ local function GetCurrencyData(prev)
                 isComplete = (info.totalEarned or info.quantity or 0) >= info.maxQuantity
             end
 
+            local quantityInfo = info
+            if currencyDef.quantityId then
+                quantityInfo = C_CurrencyInfo.GetCurrencyInfo(currencyDef.quantityId) or info
+            end
+
             result[currencyDef.key] = {
                 id = currencyDef.id,
                 name = info.name,
-                quantity = info.quantity or 0,
+                quantity = quantityInfo.quantity or 0,
                 maxQuantity = info.maxQuantity or 0,
                 maxWeeklyQuantity = info.maxWeeklyQuantity or 0,
                 totalEarned = info.totalEarned or 0,
