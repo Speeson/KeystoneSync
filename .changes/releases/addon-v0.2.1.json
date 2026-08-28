@@ -1,0 +1,12 @@
+{
+  "component": "addon",
+  "current_version": "0.2.0",
+  "version": "0.2.1",
+  "bump": "patch",
+  "tag": "v0.2.1",
+  "release_name": "KeystoneSync 0.2.1",
+  "asset": "KeystoneSync-v0.2.1.zip",
+  "changesets": [
+    "nebulous-voidcore-quantity-source.json"
+  ]
+}
