@@ -21,6 +21,7 @@ local CURRENCIES = {
 }
 
 local SPARK_OF_TIDES_ITEM_ID = 274476
+local SPARK_OF_TIDES_ICON_FILE_ID = 7551419
 local TIDAL_SPARK_DUST_CURRENCY_ID = 3509
 local TROVEHUNTERS_BOUNTY_ITEM_ID = 274374
 local TROVEHUNTERS_BOUNTY_QUEST_ID = 86371
@@ -122,7 +123,8 @@ end
 local function GetKeystoneFromBags()
     if not C_Container then return nil, nil end
 
-    for bag = 0, NUM_BAG_SLOTS do
+    local lastBag = NUM_TOTAL_EQUIPPED_BAG_SLOTS or NUM_BAG_SLOTS or 0
+    for bag = 0, lastBag do
         local slots = C_Container.GetContainerNumSlots(bag) or 0
         for slot = 1, slots do
             local link = C_Container.GetContainerItemLink(bag, slot)
@@ -140,7 +142,8 @@ local function CountItemInBags(itemID)
     local total = 0
     if not C_Container then return total end
 
-    for bag = 0, NUM_BAG_SLOTS do
+    local lastBag = NUM_TOTAL_EQUIPPED_BAG_SLOTS or NUM_BAG_SLOTS or 0
+    for bag = 0, lastBag do
         local slots = C_Container.GetContainerNumSlots(bag) or 0
         for slot = 1, slots do
             local info = C_Container.GetContainerItemInfo(bag, slot)
@@ -292,6 +295,28 @@ local function GetTexturePath(fileDataID)
     return nil
 end
 
+local function GetCharacterItemCount(itemID)
+    if not C_Item or type(C_Item.GetItemCount) ~= "function" then return 0 end
+
+    local ok, rawCount = pcall(C_Item.GetItemCount, itemID, true, false, true, false)
+    if ok and (not issecretvalue or not issecretvalue(rawCount)) and type(rawCount) == "number" then
+        return rawCount
+    end
+
+    return 0
+end
+
+local function GetItemIconFileID(itemID, fallbackFileID)
+    if C_Item and type(C_Item.GetItemIconByID) == "function" then
+        local ok, rawIconFileID = pcall(C_Item.GetItemIconByID, itemID)
+        if ok and (not issecretvalue or not issecretvalue(rawIconFileID)) and type(rawIconFileID) == "number" then
+            return rawIconFileID
+        end
+    end
+
+    return fallbackFileID
+end
+
 local function GetPreyHunts(prev)
     local normal = BuildRange(91095, 91124)
     local hard = {}
@@ -371,8 +396,9 @@ local function GetCurrencyData(prev)
 
     local sparkDust = result.tidalSparkDust
     local sparkInventoryCount = CountItemInBags(SPARK_OF_TIDES_ITEM_ID)
-    local sparkTotalCount = C_Item.GetItemCount(SPARK_OF_TIDES_ITEM_ID, true) or 0
+    local sparkTotalCount = GetCharacterItemCount(SPARK_OF_TIDES_ITEM_ID)
     local sparkItemCount = math.max(sparkInventoryCount, sparkTotalCount)
+    local sparkIconFileID = GetItemIconFileID(SPARK_OF_TIDES_ITEM_ID, SPARK_OF_TIDES_ICON_FILE_ID)
 
     result.sparksOfTides = {
         itemID = SPARK_OF_TIDES_ITEM_ID,
@@ -385,8 +411,8 @@ local function GetCurrencyData(prev)
         dustMaxQuantity = sparkDust and sparkDust.maxQuantity or 0,
         dustTotalEarned = sparkDust and sparkDust.totalEarned or 0,
         dustTrackedQuantity = sparkDust and sparkDust.trackedQuantity or 0,
-        iconFileID = C_Item.GetItemIconByID(SPARK_OF_TIDES_ITEM_ID),
-        iconPath = GetTexturePath(C_Item.GetItemIconByID(SPARK_OF_TIDES_ITEM_ID)),
+        iconFileID = sparkIconFileID,
+        iconPath = GetTexturePath(sparkIconFileID),
     }
 
     local bagCount = 0
