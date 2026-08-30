@@ -224,6 +224,7 @@ class KeystoneLootIntegrationRuntimeTests(unittest.TestCase):
                     "slotId": 10,
                     "icon": 7259236,
                     "bonusIds": [6652, 1498],
+                    "variantKey": "bonus:1498,6652",
                     "gems": [213743],
                     "enchant": 7334,
                 },
@@ -235,6 +236,7 @@ class KeystoneLootIntegrationRuntimeTests(unittest.TestCase):
                     "tier": 7,
                     "slotId": 10,
                     "icon": 7259236,
+                    "variantKey": "base",
                 },
                 {
                     "sourceId": "catalyst",
@@ -244,6 +246,7 @@ class KeystoneLootIntegrationRuntimeTests(unittest.TestCase):
                     "tier": 5,
                     "slotId": 1,
                     "icon": 7259238,
+                    "variantKey": "base",
                 },
                 {
                     "sourceId": "custom",
@@ -252,10 +255,177 @@ class KeystoneLootIntegrationRuntimeTests(unittest.TestCase):
                     "itemId": 251122,
                     "tier": 2,
                     "icon": 7259239,
+                    "variantKey": "base",
                 },
             ],
         )
         self.assertEqual(harness.evaluate("_test.lastFavoriteCharacterKey"), "Zul'jin-Spee-3")
+
+    def test_exact_favorite_variant_metadata_uses_saved_bonus_ids(self):
+        harness, integration = self.make_harness()
+        self.install_ready_api(
+            harness,
+            """{
+                { sourceId = 558, specId = 255, itemId = 251119, tier = 3,
+                  bonusIds = { 6652, 1498 } },
+            }""",
+        )
+        harness.execute(
+            """
+            _test.loadedLinks = {}
+            C_Item = {
+                GetDetailedItemLevelInfo = function(link)
+                    _test.lastDetailedLink = link
+                    return 402
+                end,
+                GetItemInfo = function(link)
+                    _test.lastInfoLink = link
+                    return "Exact favorite", link, 4
+                end,
+            }
+            Item = {
+                CreateFromItemLink = function(link)
+                    table.insert(_test.loadedLinks, link)
+                    return { ContinueOnItemLoad = function(_, callback) callback() end }
+                end,
+            }
+            """
+        )
+
+        self.start(harness, integration)
+
+        favorite = harness.stored_keystone_loot("Zul'jin-Spee")["favorites"][0]
+        self.assertEqual(favorite["bonusIds"], [6652, 1498])
+        self.assertEqual(favorite["variantKey"], "bonus:1498,6652")
+        self.assertEqual(favorite["itemLevel"], 402)
+        self.assertEqual(favorite["qualityType"], "EPIC")
+        self.assertIn(":2:6652:1498", harness.evaluate("_test.lastDetailedLink"))
+
+    def test_exact_variant_quality_maps_rare_and_unknown_safely(self):
+        harness, integration = self.make_harness()
+        self.install_ready_api(
+            harness,
+            """{
+                { sourceId = 558, specId = 255, itemId = 251119, tier = 3, bonusIds = { 10 } },
+                { sourceId = 558, specId = 255, itemId = 251120, tier = 3, bonusIds = { 20 } },
+            }""",
+        )
+        harness.execute(
+            """
+            C_Item = {
+                GetDetailedItemLevelInfo = function(link) return 389 end,
+                GetItemInfo = function(link)
+                    if string.find(link, ":10", 1, true) then return "Rare", link, 3 end
+                    return "Future", link, 99
+                end,
+            }
+            Item = { CreateFromItemLink = function()
+                return { ContinueOnItemLoad = function(_, callback) callback() end }
+            end }
+            """
+        )
+
+        self.start(harness, integration)
+
+        favorites = harness.stored_keystone_loot("Zul'jin-Spee")["favorites"]
+        self.assertEqual(favorites[0]["qualityType"], "RARE")
+        self.assertNotIn("qualityType", favorites[1])
+
+    def test_multiple_variants_of_the_same_item_keep_distinct_identity_and_metadata(self):
+        harness, integration = self.make_harness()
+        self.install_ready_api(
+            harness,
+            """{
+                { sourceId = 558, specId = 255, itemId = 251119, tier = 3, bonusIds = { 10 } },
+                { sourceId = 558, specId = 255, itemId = 251119, tier = 3, bonusIds = { 20 } },
+            }""",
+        )
+        harness.execute(
+            """
+            C_Item = {
+                GetDetailedItemLevelInfo = function(link)
+                    return string.find(link, ":10", 1, true) and 389 or 402
+                end,
+                GetItemInfo = function(link) return "Exact", link, 4 end,
+            }
+            """
+        )
+
+        self.start(harness, integration)
+
+        favorites = harness.stored_keystone_loot("Zul'jin-Spee")["favorites"]
+        self.assertEqual(
+            [(favorite["variantKey"], favorite["itemLevel"]) for favorite in favorites],
+            [("bonus:10", 389), ("bonus:20", 402)],
+        )
+
+    def test_async_variant_resolution_refreshes_current_generation_only(self):
+        harness, integration = self.make_harness()
+        self.install_ready_api(
+            harness,
+            """{
+                { sourceId = 558, specId = 255, itemId = 251119, tier = 3, bonusIds = { 6652 } },
+            }""",
+        )
+        harness.execute(
+            """
+            _test.itemCallbacks = {}
+            _test.itemReady = false
+            C_Item = {
+                GetDetailedItemLevelInfo = function() return _test.itemReady and 402 or nil end,
+                GetItemInfo = function(link)
+                    if not _test.itemReady then return nil end
+                    return "Exact favorite", link, 4
+                end,
+            }
+            Item = { CreateFromItemLink = function()
+                return { ContinueOnItemLoad = function(_, callback)
+                    table.insert(_test.itemCallbacks, callback)
+                end }
+            end }
+            """
+        )
+
+        self.start(harness, integration)
+        favorite = harness.stored_keystone_loot("Zul'jin-Spee")["favorites"][0]
+        self.assertNotIn("itemLevel", favorite)
+        self.assertNotIn("qualityType", favorite)
+        self.assertEqual(harness.evaluate("#_test.itemCallbacks"), 1)
+
+        harness.execute("_test.itemReady = true; _test.itemCallbacks[1]()")
+        favorite = harness.stored_keystone_loot("Zul'jin-Spee")["favorites"][0]
+        self.assertEqual(favorite["itemLevel"], 402)
+        self.assertEqual(favorite["qualityType"], "EPIC")
+
+        integration["RefreshCurrent"](integration)
+        self.assertEqual(harness.evaluate("#_test.itemCallbacks"), 1)
+
+    def test_stale_variant_callback_cannot_write_another_character(self):
+        harness, integration = self.make_harness()
+        self.install_ready_api(
+            harness,
+            """{{ sourceId = 558, specId = 255, itemId = 251119, tier = 3, bonusIds = { 6652 } }}""",
+        )
+        harness.execute(
+            """
+            _test.itemCallbacks = {}
+            C_Item = {
+                GetDetailedItemLevelInfo = function() return nil end,
+                GetItemInfo = function() return nil end,
+            }
+            Item = { CreateFromItemLink = function()
+                return { ContinueOnItemLoad = function(_, callback)
+                    table.insert(_test.itemCallbacks, callback)
+                end }
+            end }
+            """
+        )
+
+        self.start(harness, integration)
+        harness.execute("_test.ksKey = 'Other-Realm-Historical'; _test.klKey = 'Other-Realm-2'")
+        harness.execute("_test.itemCallbacks[1]()")
+
+        self.assertIsNone(harness.globals.KeystoneSyncDB["Other-Realm-Historical"]["keystoneLoot"])
 
     def test_ready_empty_favorites_replace_stale_snapshot(self):
         harness, integration = self.make_harness()

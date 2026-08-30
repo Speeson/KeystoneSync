@@ -6,6 +6,16 @@ local Integration = KeystoneSync.KeystoneLootIntegration
 local SUPPORTED_API_VERSION = 2
 local FAVORITES_DEBOUNCE_SECONDS = 0.1
 local CALLBACK_OWNER = {}
+local ITEM_QUALITY_TYPES = {
+    [0] = "POOR",
+    [1] = "COMMON",
+    [2] = "UNCOMMON",
+    [3] = "RARE",
+    [4] = "EPIC",
+    [5] = "LEGENDARY",
+    [6] = "ARTIFACT",
+    [7] = "HEIRLOOM",
+}
 local EXPECTED_API_METHODS = {
     "GetVersion",
     "IsReady",
@@ -63,7 +73,81 @@ local function CopyList(values)
     return result
 end
 
-local function NormalizeFavorite(api, entry)
+local function IsInteger(value)
+    return type(value) == "number" and value == math.floor(value)
+end
+
+local function NormalizeBonusIds(values)
+    if type(values) ~= "table" then
+        return nil
+    end
+
+    local result = {}
+    for _, rawValue in ipairs(values) do
+        local value = tonumber(rawValue)
+        if not IsInteger(value) or value < 0 then
+            return nil
+        end
+        table.insert(result, value)
+    end
+    return result
+end
+
+local function VariantKey(bonusIds)
+    if type(bonusIds) ~= "table" or #bonusIds == 0 then
+        return "base"
+    end
+
+    local normalized = CopyList(bonusIds)
+    table.sort(normalized)
+    local parts = {}
+    for _, bonusId in ipairs(normalized) do
+        table.insert(parts, tostring(bonusId))
+    end
+    return "bonus:" .. table.concat(parts, ",")
+end
+
+-- KeystoneLoot's own link builder uses this exact item-string layout. We keep only
+-- the Favorite's stored bonus IDs instead of adding the UI's current upgrade filters.
+local function BuildFavoriteItemLink(itemId, specId, bonusIds)
+    local playerLevel = type(UnitLevel) == "function" and tonumber(UnitLevel("player")) or 0
+    local ids = type(bonusIds) == "table" and bonusIds or {}
+    return string.format(
+        "item:%d:%s:::%d:%d:::%d:%s",
+        itemId,
+        "::::",
+        playerLevel or 0,
+        specId,
+        #ids,
+        table.concat(ids, ":")
+    )
+end
+
+local function ReadVariantMetadata(itemLink)
+    if type(C_Item) ~= "table" then
+        return nil, nil
+    end
+
+    local itemLevel = nil
+    if type(C_Item.GetDetailedItemLevelInfo) == "function" then
+        local ok, value = pcall(C_Item.GetDetailedItemLevelInfo, itemLink)
+        value = ok and tonumber(value) or nil
+        if value and IsInteger(value) and value > 0 then
+            itemLevel = value
+        end
+    end
+
+    local qualityType = nil
+    if type(C_Item.GetItemInfo) == "function" then
+        local result = { pcall(C_Item.GetItemInfo, itemLink) }
+        if result[1] then
+            qualityType = ITEM_QUALITY_TYPES[tonumber(result[4])]
+        end
+    end
+    return itemLevel, qualityType
+end
+
+local function NormalizeFavorite(integration, api, entry, characterKey)
     if type(entry) ~= "table" then
         return nil
     end
@@ -96,7 +180,9 @@ local function NormalizeFavorite(api, entry)
         icon = tonumber(itemInfo.icon)
     end
 
-    return {
+    local bonusIds = NormalizeBonusIds(entry.bonusIds)
+    local variantKey = VariantKey(bonusIds)
+    local favorite = {
         sourceId = sourceId,
         sourceType = sourceType,
         specId = specId,
@@ -104,10 +190,85 @@ local function NormalizeFavorite(api, entry)
         tier = tier,
         slotId = slotId,
         icon = icon,
-        bonusIds = CopyList(entry.bonusIds),
+        bonusIds = bonusIds,
         gems = CopyList(entry.gems),
         enchant = tonumber(entry.enchant),
+        variantKey = variantKey,
     }
+
+
+    local cacheKey = tostring(itemId) .. "\0" .. tostring(specId) .. "\0" .. variantKey
+    local metadata = integration.variantMetadata and integration.variantMetadata[cacheKey]
+    if metadata then
+        favorite.itemLevel = metadata.itemLevel
+        favorite.qualityType = metadata.qualityType
+        if metadata.complete or metadata.pending then
+            return favorite
+        end
+    end
+
+    local itemLink = BuildFavoriteItemLink(itemId, specId, bonusIds)
+    local itemLevel, qualityType = ReadVariantMetadata(itemLink)
+    if itemLevel and qualityType then
+        integration.variantMetadata[cacheKey] = {
+            complete = true,
+            itemLevel = itemLevel,
+            qualityType = qualityType,
+        }
+        favorite.itemLevel = itemLevel
+        favorite.qualityType = qualityType
+        return favorite
+    end
+
+    if not metadata and type(Item) == "table" and type(Item.CreateFromItemLink) == "function" then
+        integration.variantMetadata[cacheKey] = {
+            pending = true,
+            itemLevel = itemLevel,
+            qualityType = qualityType,
+        }
+        favorite.itemLevel = itemLevel
+        favorite.qualityType = qualityType
+        local generation = integration.generation
+        local keystoneSyncKey = integration:GetKeystoneSyncKey()
+        local ok, item = pcall(Item.CreateFromItemLink, itemLink)
+        if ok and type(item) == "table" and type(item.ContinueOnItemLoad) == "function" then
+            local callbackOK = pcall(item.ContinueOnItemLoad, item, function()
+                if not integration.active or integration.generation ~= generation then
+                    return
+                end
+                if integration:GetKeystoneSyncKey() ~= keystoneSyncKey then
+                    return
+                end
+                if integration:GetKeystoneLootCharacterKey(api) ~= characterKey then
+                    return
+                end
+                local resolvedLevel, resolvedQuality = ReadVariantMetadata(itemLink)
+                integration.variantMetadata[cacheKey] = {
+                    complete = true,
+                    itemLevel = resolvedLevel,
+                    qualityType = resolvedQuality,
+                }
+                integration:RefreshCurrent()
+            end)
+            if not callbackOK then
+                integration.variantMetadata[cacheKey] = {
+                    complete = true, itemLevel = itemLevel, qualityType = qualityType,
+                }
+            end
+        else
+            integration.variantMetadata[cacheKey] = {
+                complete = true, itemLevel = itemLevel, qualityType = qualityType,
+            }
+        end
+    elseif not metadata then
+        integration.variantMetadata[cacheKey] = {
+            complete = true, itemLevel = itemLevel, qualityType = qualityType,
+        }
+        favorite.itemLevel = itemLevel
+        favorite.qualityType = qualityType
+    end
+
+    return favorite
 end
 
 local function NormalizeVoidcore()
@@ -224,6 +385,7 @@ function Integration:Start(getKeystoneSyncKey)
     self.active = true
     self.refreshPending = false
     self.pendingGeneration = nil
+    self.variantMetadata = {}
 
     local api = KeystoneLootAPI
     self.callbackApi = type(api) == "table" and api or nil
@@ -336,7 +498,7 @@ function Integration:RefreshCurrent()
 
     local favorites = {}
     for _, entry in ipairs(rawFavorites) do
-        local favorite = NormalizeFavorite(api, entry)
+        local favorite = NormalizeFavorite(self, api, entry, characterKey)
         if favorite then
             table.insert(favorites, favorite)
         end

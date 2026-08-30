@@ -44,15 +44,18 @@ For each current character processed by KeystoneSync, the local-only
 
 A supported snapshot contains the detected API/addon versions, KeystoneLoot's current
 character key, capture timestamp, normalized favorites, and read-only Voidcore state.
-Favorite identity uses `sourceId`, `specId`, `itemId`, and numeric `tier`; optional
-enrichment includes `sourceType`, `slotId`, `icon`, `bonusIds`, `gems`, and `enchant`.
+Favorite identity uses `sourceId`, `specId`, `itemId`, numeric `tier`, and a normalized
+bonus-based `variantKey`; optional enrichment includes `sourceType`, `slotId`, `icon`,
+`bonusIds`, `gems`, `enchant`, exact item level, and exact in-game quality. Item level
+and quality remain nullable while WoW loads an item. Guarded callbacks refresh only the
+same active character snapshot, while a small session cache avoids repeated item loads.
 Dungeon `sourceId` values remain KeystoneLoot challenge mode IDs. Voidcore `usedItems` is
 a sorted list of numeric item IDs marked as used.
 
 An empty `favorites = {}` from a supported, ready KeystoneLoot API is authoritative and
 replaces an older wishlist. KeystoneSync never backfills historical character entries
-with the logged-in character's KeystoneLoot data. This V1-A block is not yet transported
-through KeystoneClient, Worker, D1, or Web.
+with the logged-in character's KeystoneLoot data. KeystoneClient and the Worker consume
+these additive exact-variant fields while remaining compatible with older snapshots.
 
 ## Installation
 

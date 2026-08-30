@@ -1,0 +1,10 @@
+{
+  "components": ["addon"],
+  "type": "patch",
+  "category": "fixed",
+  "summary": "Conserva la variante exacta de los favoritos de KeystoneLoot.",
+  "details": [
+    "Guarda el nivel de objeto y la calidad exactos cuando World of Warcraft los resuelve.",
+    "Evita mezclar variantes distintas del mismo objeto en KeystoneClient."
+  ]
+}
