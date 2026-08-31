@@ -122,7 +122,7 @@ local function SplitItemPayload(payload)
     return fields
 end
 
-local function ParseExactItemLink(itemLink, expectedItemId, expectedSpecId)
+local function ParseExactItemLink(itemLink, expectedItemId)
     if type(itemLink) ~= "string" then
         return nil
     end
@@ -143,7 +143,6 @@ local function ParseExactItemLink(itemLink, expectedItemId, expectedSpecId)
         or (expectedItemId and itemId ~= expectedItemId)
         or not IsInteger(linkLevel) or linkLevel < 0
         or not IsInteger(specId) or specId < 0
-        or (expectedSpecId and specId ~= expectedSpecId)
         or not IsInteger(modifiersMask) or modifiersMask < 0
         or not IsInteger(itemContext) or itemContext < 0
         or not IsInteger(numBonusIds) or numBonusIds <= 0 or numBonusIds > 64
@@ -163,7 +162,7 @@ local function ParseExactItemLink(itemLink, expectedItemId, expectedSpecId)
     return {
         itemId = itemId,
         linkLevel = linkLevel,
-        specId = specId,
+        linkSpecId = specId,
         modifiersMask = modifiersMask,
         itemContext = itemContext,
         numBonusIds = numBonusIds,
@@ -529,10 +528,11 @@ function Integration:RememberTooltipPreview(tooltip)
     end
     self.recentPreview = {
         itemId = parsed.itemId,
-        specId = parsed.specId,
+        linkSpecId = parsed.linkSpecId,
         itemLink = itemLink,
         seenAt = CurrentClock(),
         context = ReadSelectedContext(),
+        targetSpecs = {},
     }
 end
 
@@ -555,7 +555,7 @@ function Integration:RegisterTooltipCapture()
     end
 end
 
-function Integration:PersistCapturedVariant(api, characterKey, itemId, specId)
+function Integration:PersistCapturedVariant(api, characterKey, itemId, targetSpecId)
     if not self.active or self:GetKeystoneLootCharacterKey(api) ~= characterKey then
         return
     end
@@ -569,37 +569,41 @@ function Integration:PersistCapturedVariant(api, characterKey, itemId, specId)
         self.recentPreview = nil
         return
     end
-    if preview.specId ~= specId then
-        return
-    end
-
-    self.recentPreview = nil
     local sourceOK, sourceId = SafeCall(api, "GetItemSource", itemId)
     if not sourceOK or (type(sourceId) ~= "number" and type(sourceId) ~= "string") then
+        self.recentPreview = nil
         return
     end
     local context = ReadSelectedContext()
     if not PreviewContextMatches(preview.context, context) then
+        self.recentPreview = nil
         return
     end
-    local parsed = ParseExactItemLink(preview.itemLink, itemId, specId)
+    local parsed = ParseExactItemLink(preview.itemLink, itemId)
     if not parsed then
+        self.recentPreview = nil
         return
     end
+    if preview.sourceId ~= nil and preview.sourceId ~= sourceId then
+        self.recentPreview = nil
+        return
+    end
+    preview.sourceId = sourceId
 
     local store = self:GetCaptureStore(true)
     if not store then
         return
     end
-    local captureKey = CaptureKey(characterKey, sourceId, specId, itemId)
+    local captureKey = CaptureKey(characterKey, sourceId, targetSpecId, itemId)
     local capture = {
         characterKey = characterKey,
         sourceId = sourceId,
-        specId = specId,
+        specId = targetSpecId,
         itemId = itemId,
         bonusIds = CopyList(parsed.bonusIds),
         variantKey = VariantKey(parsed.bonusIds),
         itemString = parsed.itemLink,
+        linkSpecId = parsed.linkSpecId,
         linkLevel = parsed.linkLevel,
         modifiersMask = parsed.modifiersMask,
         itemContext = parsed.itemContext,
@@ -611,6 +615,7 @@ function Integration:PersistCapturedVariant(api, characterKey, itemId, specId)
 
     capture.metadataComplete = false
     store[captureKey] = capture
+    preview.targetSpecs[targetSpecId] = true
     self:ResolveCapturedVariant(api, capture)
 end
 
@@ -696,7 +701,7 @@ function Integration:ClearCapturedVariants(characterKey)
 end
 
 function Integration:ScheduleRefresh(eventCharacterKey)
-    if not self.active or self.refreshPending then
+    if not self.active then
         return
     end
     if not C_Timer or type(C_Timer.After) ~= "function" then
@@ -714,6 +719,13 @@ function Integration:ScheduleRefresh(eventCharacterKey)
         return
     end
 
+    if self.recentPreview then
+        self.previewPendingExpiry = self.recentPreview
+    end
+    if self.refreshPending then
+        return
+    end
+
     local generation = self.generation
     self.refreshPending = true
     self.pendingGeneration = generation
@@ -724,6 +736,11 @@ function Integration:ScheduleRefresh(eventCharacterKey)
         end
         if not self.active or self.generation ~= generation then
             return
+        end
+        local previewToExpire = self.previewPendingExpiry
+        self.previewPendingExpiry = nil
+        if self.recentPreview == previewToExpire then
+            self.recentPreview = nil
         end
         if self:GetKeystoneSyncKey() ~= keystoneSyncKey then
             return
@@ -749,6 +766,7 @@ function Integration:Start(getKeystoneSyncKey)
     self.variantMetadata = {}
     self.captureResolutionPending = {}
     self.recentPreview = nil
+    self.previewPendingExpiry = nil
     self:RegisterTooltipCapture()
 
     local api = KeystoneLootAPI
@@ -936,6 +954,7 @@ function Integration:Stop()
     self.favoritesImportedCallback = nil
     self.favoritesChangedCallback = nil
     self.recentPreview = nil
+    self.previewPendingExpiry = nil
     self.captureResolutionPending = {}
 end
 
@@ -1000,6 +1019,7 @@ function Integration:FormatFavoriteDiagnostics(snapshot)
             "itemId=" .. DiagnosticValue(favorite.itemId),
             "sourceId=" .. DiagnosticValue(favorite.sourceId),
             "specId=" .. DiagnosticValue(favorite.specId),
+            "linkSpecId=" .. DiagnosticValue(capture and capture.linkSpecId),
             "favoriteBonusIds=" .. DiagnosticList(favorite.bonusIds),
             "selectedContext=" .. DiagnosticValue(capture and capture.selectedContext),
             "selectedTrack=" .. DiagnosticValue(capture and (capture.selectedTrack or capture.selectedDifficulty)),

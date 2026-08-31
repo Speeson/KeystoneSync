@@ -29,6 +29,30 @@ local pendingSeasonCaptureKey = nil
 local personalBankAccessible = false
 local GetCharacterKey
 
+local function GenerateSavedVariablesInstanceId()
+    local timestamp = type(time) == "function" and tonumber(time()) or 0
+    local uptime = type(GetTime) == "function" and tonumber(GetTime()) or 0
+    local entropy = string.gsub(tostring({}), "[^%w]", "")
+    local randomA = math.random(100000, 999999)
+    local randomB = math.random(100000, 999999)
+    return string.format(
+        "ksv1-%d-%d-%d-%d-%s",
+        timestamp or 0,
+        math.floor((uptime or 0) * 1000),
+        randomA,
+        randomB,
+        entropy
+    )
+end
+
+local function EnsureSavedVariablesInstanceId()
+    if type(KeystoneSyncDB.savedVariablesInstanceId) ~= "string"
+        or KeystoneSyncDB.savedVariablesInstanceId == "" then
+        KeystoneSyncDB.savedVariablesInstanceId = GenerateSavedVariablesInstanceId()
+    end
+    return KeystoneSyncDB.savedVariablesInstanceId
+end
+
 local function RefreshKeystoneLoot()
     if not KeystoneLootIntegration or type(KeystoneLootIntegration.RefreshCurrent) ~= "function" then
         return nil
@@ -888,9 +912,10 @@ local function GetMoneyData(prev, reason)
 end
 
 local function SaveCharacterData(reason, updateSeason, refreshKeystoneLoot)
-    if UnitLevel("player") < MAX_LEVEL then return end
-
     KeystoneSyncDB = KeystoneSyncDB or {}
+    EnsureSavedVariablesInstanceId()
+
+    if UnitLevel("player") < MAX_LEVEL then return end
 
     local character = UnitName("player")
     local realm = GetRealmName()

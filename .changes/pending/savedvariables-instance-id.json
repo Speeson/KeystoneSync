@@ -1,0 +1,9 @@
+{
+  "components": ["addon"],
+  "type": "patch",
+  "category": "fixed",
+  "summary": "Permite detectar reinicializaciones reales de los datos locales del addon.",
+  "details": [
+    "Añade un identificador persistente de la instancia de SavedVariables para que KeystoneClient pueda reconciliar favoritos obsoletos de KeystoneLoot sin borrar personajes."
+  ]
+}

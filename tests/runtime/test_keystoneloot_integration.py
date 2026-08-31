@@ -459,6 +459,191 @@ class KeystoneLootIntegrationRuntimeTests(unittest.TestCase):
         self.assertEqual(captured["itemContext"], 0)
         self.assertEqual(captured["numBonusIds"], 3)
 
+    def test_exact_preview_can_be_captured_for_a_different_target_spec(self):
+        harness, integration = self.make_harness()
+        self.install_ready_api(harness, "_test.favorites")
+        harness.execute(
+            """
+            _test.favorites = {}
+            KeystoneLootCharDB = {
+                ui = { selectedTab = "dungeons" },
+                filters = { specId = 65, dungeon = { track = "hero", rank = 3 } },
+            }
+            C_Item = {
+                GetDetailedItemLevelInfo = function() return 311 end,
+                GetItemInfo = function(link) return "Hero preview", link, 4 end,
+            }
+            """
+        )
+        self.start(harness, integration)
+        self.show_item_tooltip(
+            harness, "item:251119::::::::90:70:::3:1564:12843:1674"
+        )
+        harness.execute(
+            "_test.favorites = { { sourceId = 558, specId = 65, itemId = 251119, tier = 3 } }"
+        )
+
+        self.callback(harness, "FAVORITE_ADDED")(
+            "FAVORITE_ADDED", "Zul'jin-Spee-3", 251119, 65, 3
+        )
+        integration["RefreshCurrent"](integration)
+
+        favorite = harness.stored_keystone_loot("Zul'jin-Spee")["favorites"][0]
+        self.assertEqual(favorite["bonusIds"], [1564, 12843, 1674])
+        self.assertEqual(favorite["variantKey"], "bonus:1564,1674,12843")
+        self.assertEqual(favorite["itemLevel"], 311)
+        self.assertEqual(favorite["qualityType"], "EPIC")
+        capture = next(
+            iter(
+                harness.globals.KeystoneSyncDB["Zul'jin-Spee"][
+                    "keystoneLootFavoriteCaptures"
+                ].values()
+            )
+        )
+        self.assertEqual(capture["specId"], 65)
+        self.assertEqual(capture["linkSpecId"], 70)
+
+    def test_all_specializations_reuses_one_exact_preview_for_each_emitted_spec(self):
+        harness, integration = self.make_harness()
+        self.install_ready_api(harness, "_test.favorites")
+        harness.execute(
+            """
+            _test.favorites = {}
+            KeystoneLootCharDB = {
+                ui = { selectedTab = "dungeons" },
+                filters = { specId = 0, dungeon = { track = "hero", rank = 3 } },
+            }
+            C_Item = {
+                GetDetailedItemLevelInfo = function() return 311 end,
+                GetItemInfo = function(link) return "Hero preview", link, 4 end,
+            }
+            """
+        )
+        self.start(harness, integration)
+        self.show_item_tooltip(
+            harness, "item:251119::::::::90:70:::3:1564:12843:1674"
+        )
+        harness.execute(
+            """
+            _test.favorites = {
+                { sourceId = 558, specId = 65, itemId = 251119, tier = 3 },
+                { sourceId = 558, specId = 66, itemId = 251119, tier = 3 },
+                { sourceId = 558, specId = 70, itemId = 251119, tier = 3 },
+            }
+            """
+        )
+
+        callback = self.callback(harness, "FAVORITE_ADDED")
+        changed_callback = self.callback(harness, "FAVORITES_CHANGED")
+        for spec_id in (65, 66, 70):
+            callback("FAVORITE_ADDED", "Zul'jin-Spee-3", 251119, spec_id, 3)
+            changed_callback("FAVORITES_CHANGED", "Zul'jin-Spee-3")
+        harness.run_timers()
+
+        favorites = harness.stored_keystone_loot("Zul'jin-Spee")["favorites"]
+        self.assertEqual([favorite["specId"] for favorite in favorites], [65, 66, 70])
+        self.assertEqual(
+            {favorite["variantKey"] for favorite in favorites},
+            {"bonus:1564,1674,12843"},
+        )
+        self.assertTrue(all(favorite["itemLevel"] == 311 for favorite in favorites))
+        self.assertTrue(all(favorite["qualityType"] == "EPIC" for favorite in favorites))
+        self.assertTrue(all(favorite["variantKey"] != "base" for favorite in favorites))
+        captures = lua_to_python(
+            harness.globals.KeystoneSyncDB["Zul'jin-Spee"][
+                "keystoneLootFavoriteCaptures"
+            ]
+        )
+        self.assertEqual({capture["specId"] for capture in captures.values()}, {65, 66, 70})
+        self.assertEqual({capture["linkSpecId"] for capture in captures.values()}, {70})
+        self.assertIsNone(integration["recentPreview"])
+
+    def test_single_emitted_spec_does_not_invent_other_spec_captures(self):
+        harness, integration = self.make_harness()
+        self.install_ready_api(harness, "_test.favorites")
+        harness.execute(
+            """
+            _test.favorites = {}
+            KeystoneLootCharDB = {
+                ui = { selectedTab = "dungeons" },
+                filters = { specId = 70, dungeon = { track = "hero", rank = 3 } },
+            }
+            C_Item = {
+                GetDetailedItemLevelInfo = function() return 311 end,
+                GetItemInfo = function(link) return "Hero preview", link, 4 end,
+            }
+            """
+        )
+        self.start(harness, integration)
+        self.show_item_tooltip(
+            harness, "item:251119::::::::90:70:::3:1564:12843:1674"
+        )
+        harness.execute(
+            "_test.favorites = { { sourceId = 558, specId = 70, itemId = 251119, tier = 3 } }"
+        )
+
+        self.callback(harness, "FAVORITE_ADDED")(
+            "FAVORITE_ADDED", "Zul'jin-Spee-3", 251119, 70, 3
+        )
+
+        captures = lua_to_python(
+            harness.globals.KeystoneSyncDB["Zul'jin-Spee"][
+                "keystoneLootFavoriteCaptures"
+            ]
+        )
+        self.assertEqual([capture["specId"] for capture in captures.values()], [70])
+
+    def test_reusable_preview_is_invalidated_by_item_source_and_ttl_mismatches(self):
+        for mismatch in ("item", "source", "ttl"):
+            with self.subTest(mismatch=mismatch):
+                harness, integration = self.make_harness()
+                self.install_ready_api(harness, "_test.favorites")
+                harness.execute(
+                    """
+                    _test.favorites = {}
+                    _test.captureSourceId = 558
+                    KeystoneLootAPI.GetItemSource = function() return _test.captureSourceId end
+                    KeystoneLootCharDB = {
+                        ui = { selectedTab = "dungeons" },
+                        filters = { specId = 0, dungeon = { track = "hero", rank = 3 } },
+                    }
+                    C_Item = {
+                        GetDetailedItemLevelInfo = function() return 311 end,
+                        GetItemInfo = function(link) return "Hero preview", link, 4 end,
+                    }
+                    """
+                )
+                self.start(harness, integration)
+                self.show_item_tooltip(
+                    harness, "item:251119::::::::90:70:::3:1564:12843:1674"
+                )
+                callback = self.callback(harness, "FAVORITE_ADDED")
+
+                if mismatch == "source":
+                    callback("FAVORITE_ADDED", "Zul'jin-Spee-3", 251119, 70, 3)
+                    harness.execute("_test.captureSourceId = 9001")
+                    callback("FAVORITE_ADDED", "Zul'jin-Spee-3", 251119, 65, 3)
+                    captures = lua_to_python(
+                        harness.globals.KeystoneSyncDB["Zul'jin-Spee"][
+                            "keystoneLootFavoriteCaptures"
+                        ]
+                    )
+                    self.assertEqual(
+                        [capture["specId"] for capture in captures.values()], [70]
+                    )
+                    self.assertIsNone(integration["recentPreview"])
+                else:
+                    if mismatch == "ttl":
+                        harness.execute("_test.now = _test.now + 31")
+                    item_id = 251120 if mismatch == "item" else 251119
+                    callback("FAVORITE_ADDED", "Zul'jin-Spee-3", item_id, 65, 3)
+                    self.assertIsNone(
+                        harness.globals.KeystoneSyncDB["Zul'jin-Spee"][
+                            "keystoneLootFavoriteCaptures"
+                        ]
+                    )
+                    self.assertIsNone(integration["recentPreview"])
+
     def test_filter_changes_after_capture_do_not_mutate_the_favorite_variant(self):
         harness, integration = self.make_harness()
         self.install_ready_api(harness, "_test.favorites")
@@ -764,6 +949,16 @@ class KeystoneLootIntegrationRuntimeTests(unittest.TestCase):
         self.assertIsNone(
             harness.globals.KeystoneSyncDB["Zul'jin-Spee"]["keystoneLootFavoriteCaptures"]
         )
+        harness.execute(
+            'KeystoneLootCharDB.filters.dungeon.track = "hero"; '
+            "KeystoneLootCharDB.filters.dungeon.rank = 1"
+        )
+        self.callback(harness, "FAVORITE_ADDED")(
+            "FAVORITE_ADDED", "Zul'jin-Spee-3", 251119, 255, 3
+        )
+        self.assertIsNone(
+            harness.globals.KeystoneSyncDB["Zul'jin-Spee"]["keystoneLootFavoriteCaptures"]
+        )
 
     def test_exact_variant_quality_maps_rare_and_unknown_safely(self):
         harness, integration = self.make_harness()
@@ -1024,6 +1219,7 @@ class KeystoneLootIntegrationRuntimeTests(unittest.TestCase):
         legacy = next(line for line in lines if "itemId=251120" in line)
         self.assertIn("selectedTrack=hero", captured)
         self.assertIn("selectedRank=5", captured)
+        self.assertIn("linkSpecId=255", captured)
         self.assertIn("itemLevel=318", captured)
         self.assertIn("qualityTypeExact=EPIC", captured)
         self.assertIn("metadataSource=captured_variant", captured)
@@ -1159,6 +1355,53 @@ class KeystoneSyncIntegrationLifecycleTests(unittest.TestCase):
         self.assertLess(
             lines.index("KeystoneLootIntegration.lua"),
             lines.index("KeystoneSync.lua"),
+        )
+
+    def test_new_savedvariables_database_gets_one_persistent_instance_id(self):
+        harness = self.make_runtime()
+
+        self.fire(harness, "PLAYER_LOGIN")
+        instance_id = harness.globals.KeystoneSyncDB["savedVariablesInstanceId"]
+        self.assertIsInstance(instance_id, str)
+        self.assertRegex(instance_id, r"^ksv1-[a-zA-Z0-9-]+$")
+
+        self.fire(harness, "BAG_UPDATE_DELAYED")
+        self.assertEqual(
+            harness.globals.KeystoneSyncDB["savedVariablesInstanceId"], instance_id
+        )
+
+    def test_legacy_database_enrolls_without_losing_existing_character_data(self):
+        harness = self.make_runtime()
+        harness.execute(
+            """
+            KeystoneSyncDB = {
+                ["Other-Realm-Historical"] = { normalData = "preserved" },
+            }
+            """
+        )
+
+        self.fire(harness, "PLAYER_LOGIN")
+
+        self.assertIsInstance(
+            harness.globals.KeystoneSyncDB["savedVariablesInstanceId"], str
+        )
+        self.assertEqual(
+            harness.globals.KeystoneSyncDB["Other-Realm-Historical"]["normalData"],
+            "preserved",
+        )
+
+    def test_savedvariables_instance_id_survives_addon_reload(self):
+        harness = self.make_runtime()
+        self.fire(harness, "PLAYER_LOGIN")
+        instance_id = harness.globals.KeystoneSyncDB["savedVariablesInstanceId"]
+        self.assertIsInstance(instance_id, str)
+
+        harness.load_addon_file("KeystoneSync.lua")
+        reloaded_frame = harness.globals._test.frames[2]
+        reloaded_frame["OnEvent"](reloaded_frame, "PLAYER_LOGIN")
+
+        self.assertEqual(
+            harness.globals.KeystoneSyncDB["savedVariablesInstanceId"], instance_id
         )
 
     def test_player_login_saves_normal_record_before_starting_integration(self):

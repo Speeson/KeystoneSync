@@ -1,0 +1,10 @@
+{
+  "components": ["addon"],
+  "type": "patch",
+  "category": "fixed",
+  "summary": "Corrige las variantes exactas de favoritos de KeystoneLoot entre especializaciones.",
+  "details": [
+    "Reutiliza de forma segura la variante mostrada para todas las especializaciones concretas que KeystoneLoot emite al usar Todas las especializaciones.",
+    "Conserva correctamente nivel de objeto, calidad y variante exacta, y evita favoritos genéricos duplicados derivados de variantes base."
+  ]
+}

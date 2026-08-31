@@ -42,9 +42,17 @@ upgrade tables or call hidden globals.
 KeystoneSync registers a Blizzard `TooltipDataProcessor` item callback. The normal KeystoneLoot
 interaction displays its fully resolved preview before the user chooses a Favorite tier, so the
 callback retains only the most recent structurally valid item hyperlink. On `FAVORITE_ADDED`, the
-capture is accepted only when it is recent, its item/spec match the event, its filter context still
-matches, and its parsed item payload contains a positive, correctly positioned `numBonusIDs` list.
-The public API supplies the source ID.
+capture is accepted only when it is recent, its item and bound source match the event, its filter
+context still matches, and its parsed item payload contains a positive, correctly positioned
+`numBonusIDs` list. The public API supplies the source ID. The spec embedded in the hyperlink is
+stored as diagnostic `linkSpecId`; the `FAVORITE_ADDED` spec is the target storage identity.
+
+A single preview remains reusable throughout the synchronous mutation burst produced by
+`All Specializations`. Each concrete spec emitted by KeystoneLoot receives the same exact variant;
+KeystoneSync never expands spec `0` or invents specs. Every accompanying `FAVORITES_CHANGED`
+updates the preview scheduled for expiry, and the debounced refresh expires that same preview after
+the burst. A newer tooltip preview is not cleared by an older pending refresh. TTL, item, source,
+filter context, track/rank, generation, and character guards continue to reject stale association.
 
 The captured record lives under the current KeystoneSync character as
 `keystoneLootFavoriteCaptures` and contains character/source/spec/item identity, canonical bonus
