@@ -1,0 +1,9 @@
+{
+  "components": ["addon"],
+  "type": "patch",
+  "category": "fixed",
+  "summary": "Corrige el seguimiento de Chispa de las Mareas en almacenes de componentes.",
+  "details": [
+    "Cuenta las Chispas de las Mareas guardadas en la bolsa de componentes equipada o en el banco de componentes personal."
+  ]
+}
