@@ -5,6 +5,7 @@ KeystoneSync.KeystoneLootIntegration = {}
 local Integration = KeystoneSync.KeystoneLootIntegration
 local SUPPORTED_API_VERSION = 2
 local FAVORITES_DEBOUNCE_SECONDS = 0.1
+local PREVIEW_CAPTURE_MAX_AGE_SECONDS = 30
 local CALLBACK_OWNER = {}
 local ITEM_QUALITY_TYPES = {
     [0] = "POOR",
@@ -21,6 +22,7 @@ local EXPECTED_API_METHODS = {
     "IsReady",
     "GetCurrentCharacterKey",
     "GetFavorites",
+    "GetItemSource",
     "GetSourceInfo",
     "GetItemInfo",
     "RegisterCallback",
@@ -107,8 +109,129 @@ local function VariantKey(bonusIds)
     return "bonus:" .. table.concat(parts, ",")
 end
 
--- KeystoneLoot's own link builder uses this exact item-string layout. We keep only
--- the Favorite's stored bonus IDs instead of adding the UI's current upgrade filters.
+local function SplitItemPayload(payload)
+    local fields = {}
+    local startIndex = 1
+    for index = 1, #payload do
+        if string.sub(payload, index, index) == ":" then
+            table.insert(fields, string.sub(payload, startIndex, index - 1))
+            startIndex = index + 1
+        end
+    end
+    table.insert(fields, string.sub(payload, startIndex))
+    return fields
+end
+
+local function ParseExactItemLink(itemLink, expectedItemId, expectedSpecId)
+    if type(itemLink) ~= "string" then
+        return nil
+    end
+
+    local payload = string.match(itemLink, "|Hitem:([^|]+)|h") or string.match(itemLink, "^item:(.*)$")
+    if not payload then
+        return nil
+    end
+
+    local fields = SplitItemPayload(payload)
+    local itemId = tonumber(fields[1])
+    local linkLevel = tonumber(fields[9])
+    local specId = tonumber(fields[10])
+    local modifiersMask = fields[11] == "" and 0 or tonumber(fields[11])
+    local itemContext = fields[12] == "" and 0 or tonumber(fields[12])
+    local numBonusIds = tonumber(fields[13])
+    if not IsInteger(itemId) or itemId <= 0
+        or (expectedItemId and itemId ~= expectedItemId)
+        or not IsInteger(linkLevel) or linkLevel < 0
+        or not IsInteger(specId) or specId < 0
+        or (expectedSpecId and specId ~= expectedSpecId)
+        or not IsInteger(modifiersMask) or modifiersMask < 0
+        or not IsInteger(itemContext) or itemContext < 0
+        or not IsInteger(numBonusIds) or numBonusIds <= 0 or numBonusIds > 64
+        or #fields < 13 + numBonusIds then
+        return nil
+    end
+
+    local bonusIds = {}
+    for index = 1, numBonusIds do
+        local bonusId = tonumber(fields[13 + index])
+        if not IsInteger(bonusId) or bonusId <= 0 then
+            return nil
+        end
+        table.insert(bonusIds, bonusId)
+    end
+
+    return {
+        itemId = itemId,
+        linkLevel = linkLevel,
+        specId = specId,
+        modifiersMask = modifiersMask,
+        itemContext = itemContext,
+        numBonusIds = numBonusIds,
+        bonusIds = bonusIds,
+        itemLink = itemLink,
+    }
+end
+
+local function CurrentClock()
+    if type(GetTime) == "function" then
+        local ok, value = pcall(GetTime)
+        if ok and type(value) == "number" then
+            return value
+        end
+    end
+    return type(time) == "function" and time() or 0
+end
+
+local function CaptureKey(characterKey, sourceId, specId, itemId)
+    return table.concat({ tostring(characterKey), tostring(sourceId), tostring(specId), tostring(itemId) }, "|")
+end
+
+local function ReadSelectedContext()
+    local charDB = type(KeystoneLootCharDB) == "table" and KeystoneLootCharDB or nil
+    local filters = charDB and type(charDB.filters) == "table" and charDB.filters or nil
+    local ui = charDB and type(charDB.ui) == "table" and charDB.ui or nil
+    local selectedTab = ui and ui.selectedTab or nil
+    local context = {
+        selectedContext = selectedTab == "dungeons" and "dungeon"
+            or selectedTab == "raids" and "raid"
+            or selectedTab,
+        selectedSpecId = filters and tonumber(filters.specId) or nil,
+        selectedClassId = filters and tonumber(filters.classId) or nil,
+        selectedSlotId = filters and tonumber(filters.slotId) or nil,
+    }
+
+    if selectedTab == "dungeons" and filters and type(filters.dungeon) == "table" then
+        context.selectedTrack = filters.dungeon.track
+        context.selectedRank = tonumber(filters.dungeon.rank)
+    elseif selectedTab == "raids" and filters and type(filters.raid) == "table" then
+        context.selectedDifficulty = filters.raid.difficulty
+        context.selectedRank = tonumber(filters.raid.rank)
+    end
+    return context
+end
+
+local function CopyFields(target, source)
+    for key, value in pairs(source) do
+        target[key] = value
+    end
+end
+
+local function PreviewContextMatches(left, right)
+    if type(left) ~= "table" or type(right) ~= "table" then
+        return false
+    end
+    for _, key in ipairs({
+        "selectedContext", "selectedTrack", "selectedDifficulty", "selectedRank", "selectedSpecId",
+    }) do
+        if left[key] ~= right[key] then
+            return false
+        end
+    end
+    return true
+end
+
+-- Explicit Favorite bonus IDs already identify a real variant. This builder is never
+-- called for a base Favorite, because base item metadata is not exact Favorite metadata.
 local function BuildFavoriteItemLink(itemId, specId, bonusIds)
     local playerLevel = type(UnitLevel) == "function" and tonumber(UnitLevel("player")) or 0
     local ids = type(bonusIds) == "table" and bonusIds or {}
@@ -181,6 +304,20 @@ local function NormalizeFavorite(integration, api, entry, characterKey)
     end
 
     local bonusIds = NormalizeBonusIds(entry.bonusIds)
+    if type(bonusIds) == "table" and #bonusIds == 0 then
+        bonusIds = nil
+    end
+    local capturedVariant = nil
+    if not bonusIds and type(integration.GetCapturedVariant) == "function" then
+        capturedVariant = integration:GetCapturedVariant(characterKey, sourceId, specId, itemId)
+        if capturedVariant then
+            bonusIds = NormalizeBonusIds(capturedVariant.bonusIds)
+            if type(bonusIds) ~= "table" or #bonusIds == 0 then
+                bonusIds = nil
+                capturedVariant = nil
+            end
+        end
+    end
     local variantKey = VariantKey(bonusIds)
     local favorite = {
         sourceId = sourceId,
@@ -196,6 +333,21 @@ local function NormalizeFavorite(integration, api, entry, characterKey)
         variantKey = variantKey,
     }
 
+    if capturedVariant then
+        if capturedVariant.metadataComplete ~= true and type(integration.ResolveCapturedVariant) == "function" then
+            integration:ResolveCapturedVariant(api, capturedVariant)
+        end
+        favorite.itemLevel = capturedVariant.itemLevel
+        favorite.qualityType = capturedVariant.qualityType
+        return favorite
+    end
+
+    -- A normal KeystoneLoot UI Favorite usually has no bonus IDs. Resolving the bare
+    -- item ID here would produce sparse base metadata (for example ilvl 28 / RARE),
+    -- which must never be labeled as the exact selected Favorite variant.
+    if not bonusIds then
+        return favorite
+    end
 
     local cacheKey = tostring(itemId) .. "\0" .. tostring(specId) .. "\0" .. variantKey
     local metadata = integration.variantMetadata and integration.variantMetadata[cacheKey]
@@ -334,6 +486,215 @@ function Integration:GetKeystoneLootCharacterKey(api)
     return nil
 end
 
+function Integration:GetCaptureStore(create)
+    local keystoneSyncKey = self:GetKeystoneSyncKey()
+    local record = keystoneSyncKey and type(KeystoneSyncDB) == "table" and KeystoneSyncDB[keystoneSyncKey] or nil
+    if type(record) ~= "table" then
+        return nil
+    end
+    if type(record.keystoneLootFavoriteCaptures) ~= "table" then
+        if not create then
+            return nil
+        end
+        record.keystoneLootFavoriteCaptures = {}
+    end
+    return record.keystoneLootFavoriteCaptures
+end
+
+function Integration:GetCapturedVariant(characterKey, sourceId, specId, itemId)
+    local store = self:GetCaptureStore(false)
+    local capture = store and store[CaptureKey(characterKey, sourceId, specId, itemId)] or nil
+    if type(capture) ~= "table" or capture.characterKey ~= characterKey
+        or capture.sourceId ~= sourceId or tonumber(capture.specId) ~= specId
+        or tonumber(capture.itemId) ~= itemId then
+        return nil
+    end
+    local bonusIds = NormalizeBonusIds(capture.bonusIds)
+    if type(bonusIds) ~= "table" or #bonusIds == 0 then
+        return nil
+    end
+    return capture
+end
+
+function Integration:RememberTooltipPreview(tooltip)
+    if not self.active or type(tooltip) ~= "table" or tooltip.KeystoneLootOwned ~= true
+        or type(tooltip.GetItem) ~= "function" then
+        return
+    end
+    local result = { pcall(tooltip.GetItem, tooltip) }
+    local itemLink = result[1] and result[3] or nil
+    local parsed = ParseExactItemLink(itemLink)
+    if not parsed then
+        return
+    end
+    self.recentPreview = {
+        itemId = parsed.itemId,
+        specId = parsed.specId,
+        itemLink = itemLink,
+        seenAt = CurrentClock(),
+        context = ReadSelectedContext(),
+    }
+end
+
+function Integration:RegisterTooltipCapture()
+    if self.tooltipHookRegistered then
+        return
+    end
+    if type(TooltipDataProcessor) ~= "table" or type(TooltipDataProcessor.AddTooltipPostCall) ~= "function"
+        or type(Enum) ~= "table" or type(Enum.TooltipDataType) ~= "table"
+        or Enum.TooltipDataType.Item == nil then
+        return
+    end
+
+    local integration = self
+    local ok = pcall(TooltipDataProcessor.AddTooltipPostCall, Enum.TooltipDataType.Item, function(tooltip)
+        integration:RememberTooltipPreview(tooltip)
+    end)
+    if ok then
+        self.tooltipHookRegistered = true
+    end
+end
+
+function Integration:PersistCapturedVariant(api, characterKey, itemId, specId)
+    if not self.active or self:GetKeystoneLootCharacterKey(api) ~= characterKey then
+        return
+    end
+    local preview = self.recentPreview
+    local age = preview and CurrentClock() - preview.seenAt or nil
+    if not preview then
+        return
+    end
+    if type(age) ~= "number" or age < 0 or age > PREVIEW_CAPTURE_MAX_AGE_SECONDS
+        or preview.itemId ~= itemId then
+        self.recentPreview = nil
+        return
+    end
+    if preview.specId ~= specId then
+        return
+    end
+
+    self.recentPreview = nil
+    local sourceOK, sourceId = SafeCall(api, "GetItemSource", itemId)
+    if not sourceOK or (type(sourceId) ~= "number" and type(sourceId) ~= "string") then
+        return
+    end
+    local context = ReadSelectedContext()
+    if not PreviewContextMatches(preview.context, context) then
+        return
+    end
+    local parsed = ParseExactItemLink(preview.itemLink, itemId, specId)
+    if not parsed then
+        return
+    end
+
+    local store = self:GetCaptureStore(true)
+    if not store then
+        return
+    end
+    local captureKey = CaptureKey(characterKey, sourceId, specId, itemId)
+    local capture = {
+        characterKey = characterKey,
+        sourceId = sourceId,
+        specId = specId,
+        itemId = itemId,
+        bonusIds = CopyList(parsed.bonusIds),
+        variantKey = VariantKey(parsed.bonusIds),
+        itemString = parsed.itemLink,
+        linkLevel = parsed.linkLevel,
+        modifiersMask = parsed.modifiersMask,
+        itemContext = parsed.itemContext,
+        numBonusIds = parsed.numBonusIds,
+        capturedAt = type(time) == "function" and time() or 0,
+        metadataSource = "captured_variant",
+    }
+    CopyFields(capture, context)
+
+    capture.metadataComplete = false
+    store[captureKey] = capture
+    self:ResolveCapturedVariant(api, capture)
+end
+
+function Integration:ResolveCapturedVariant(api, capture)
+    if type(capture) ~= "table" or capture.metadataComplete == true or type(capture.itemString) ~= "string" then
+        return
+    end
+    local captureKey = CaptureKey(capture.characterKey, capture.sourceId, capture.specId, capture.itemId)
+    self.captureResolutionPending = self.captureResolutionPending or {}
+    if self.captureResolutionPending[captureKey] then
+        return
+    end
+
+    local itemLevel, qualityType = ReadVariantMetadata(capture.itemString)
+    capture.itemLevel = itemLevel
+    capture.qualityType = qualityType
+    if itemLevel ~= nil and qualityType ~= nil then
+        capture.metadataComplete = true
+        return
+    end
+    if type(Item) ~= "table" or type(Item.CreateFromItemLink) ~= "function" then
+        capture.metadataComplete = true
+        return
+    end
+
+    local generation = self.generation
+    local keystoneSyncKey = self:GetKeystoneSyncKey()
+    self.captureResolutionPending[captureKey] = true
+    local ok, item = pcall(Item.CreateFromItemLink, capture.itemString)
+    if not ok or type(item) ~= "table" or type(item.ContinueOnItemLoad) ~= "function" then
+        self.captureResolutionPending[captureKey] = nil
+        capture.metadataComplete = true
+        return
+    end
+    local callbackOK = pcall(item.ContinueOnItemLoad, item, function()
+        self.captureResolutionPending[captureKey] = nil
+        if not self.active or self.generation ~= generation
+            or self:GetKeystoneSyncKey() ~= keystoneSyncKey
+            or self:GetKeystoneLootCharacterKey(api) ~= capture.characterKey then
+            return
+        end
+        local currentStore = self:GetCaptureStore(false)
+        local current = currentStore and currentStore[captureKey] or nil
+        if current ~= capture then
+            return
+        end
+        local resolvedLevel, resolvedQuality = ReadVariantMetadata(capture.itemString)
+        current.itemLevel = resolvedLevel
+        current.qualityType = resolvedQuality
+        current.metadataComplete = true
+        self:RefreshCurrent()
+    end)
+    if not callbackOK then
+        self.captureResolutionPending[captureKey] = nil
+        capture.metadataComplete = true
+    end
+end
+
+function Integration:RemoveCapturedVariants(characterKey, itemId, specId)
+    local store = self:GetCaptureStore(false)
+    if not store then
+        return
+    end
+    for key, capture in pairs(store) do
+        if type(capture) == "table" and capture.characterKey == characterKey
+            and tonumber(capture.itemId) == itemId
+            and (specId == 0 or tonumber(capture.specId) == specId) then
+            store[key] = nil
+        end
+    end
+end
+
+function Integration:ClearCapturedVariants(characterKey)
+    local store = self:GetCaptureStore(false)
+    if not store then
+        return
+    end
+    for key, capture in pairs(store) do
+        if type(capture) == "table" and capture.characterKey == characterKey then
+            store[key] = nil
+        end
+    end
+end
+
 function Integration:ScheduleRefresh(eventCharacterKey)
     if not self.active or self.refreshPending then
         return
@@ -386,6 +747,9 @@ function Integration:Start(getKeystoneSyncKey)
     self.refreshPending = false
     self.pendingGeneration = nil
     self.variantMetadata = {}
+    self.captureResolutionPending = {}
+    self.recentPreview = nil
+    self:RegisterTooltipCapture()
 
     local api = KeystoneLootAPI
     self.callbackApi = type(api) == "table" and api or nil
@@ -411,8 +775,41 @@ function Integration:Start(getKeystoneSyncKey)
             end
             self:ScheduleRefresh(characterKey)
         end
+        self.favoriteAddedCallback = function(_, characterKey, itemId, specId)
+            if not self.active or self.generation ~= generation then
+                return
+            end
+            itemId = tonumber(itemId)
+            specId = tonumber(specId)
+            if type(characterKey) ~= "string" or not IsInteger(itemId) or itemId <= 0
+                or not IsInteger(specId) or specId <= 0 then
+                return
+            end
+            self:PersistCapturedVariant(api, characterKey, itemId, specId)
+        end
+        self.favoriteRemovedCallback = function(_, characterKey, itemId, specId)
+            if not self.active or self.generation ~= generation then
+                return
+            end
+            itemId = tonumber(itemId)
+            specId = tonumber(specId)
+            if type(characterKey) ~= "string" or not IsInteger(itemId) or itemId <= 0
+                or not IsInteger(specId) or specId < 0 then
+                return
+            end
+            self:RemoveCapturedVariants(characterKey, itemId, specId)
+        end
+        self.favoritesImportedCallback = function(_, characterKey)
+            if not self.active or self.generation ~= generation or type(characterKey) ~= "string" then
+                return
+            end
+            self:ClearCapturedVariants(characterKey)
+        end
 
         SafeCall(api, "RegisterCallback", "READY", self.readyCallback, CALLBACK_OWNER)
+        SafeCall(api, "RegisterCallback", "FAVORITE_ADDED", self.favoriteAddedCallback, CALLBACK_OWNER)
+        SafeCall(api, "RegisterCallback", "FAVORITE_REMOVED", self.favoriteRemovedCallback, CALLBACK_OWNER)
+        SafeCall(api, "RegisterCallback", "FAVORITES_IMPORTED", self.favoritesImportedCallback, CALLBACK_OWNER)
         SafeCall(api, "RegisterCallback", "FAVORITES_CHANGED", self.favoritesChangedCallback, CALLBACK_OWNER)
     end
 
@@ -526,12 +923,20 @@ function Integration:Stop()
 
     if type(api) == "table" and type(api.UnregisterCallback) == "function" then
         SafeCall(api, "UnregisterCallback", "READY", CALLBACK_OWNER)
+        SafeCall(api, "UnregisterCallback", "FAVORITE_ADDED", CALLBACK_OWNER)
+        SafeCall(api, "UnregisterCallback", "FAVORITE_REMOVED", CALLBACK_OWNER)
+        SafeCall(api, "UnregisterCallback", "FAVORITES_IMPORTED", CALLBACK_OWNER)
         SafeCall(api, "UnregisterCallback", "FAVORITES_CHANGED", CALLBACK_OWNER)
     end
 
     self.callbackApi = nil
     self.readyCallback = nil
+    self.favoriteAddedCallback = nil
+    self.favoriteRemovedCallback = nil
+    self.favoritesImportedCallback = nil
     self.favoritesChangedCallback = nil
+    self.recentPreview = nil
+    self.captureResolutionPending = {}
 end
 
 function Integration:FormatDiagnostic(snapshot)
@@ -552,4 +957,58 @@ function Integration:FormatDiagnostic(snapshot)
     end
 
     return "KeystoneLoot no detectado."
+end
+
+local function DiagnosticValue(value)
+    if value == nil or value == "" then
+        return "unavailable"
+    end
+    return tostring(value)
+end
+
+local function DiagnosticList(values)
+    if type(values) ~= "table" or #values == 0 then
+        return "[]"
+    end
+    local parts = {}
+    for _, value in ipairs(values) do
+        table.insert(parts, tostring(value))
+    end
+    return "[" .. table.concat(parts, ",") .. "]"
+end
+
+function Integration:FormatFavoriteDiagnostics(snapshot)
+    local lines = { "KeystoneSync KeystoneLoot diagnostic" }
+    if type(snapshot) ~= "table" or snapshot.state ~= "supported" or type(snapshot.favorites) ~= "table" then
+        table.insert(lines, "favorites: unavailable")
+        return lines
+    end
+    if #snapshot.favorites == 0 then
+        table.insert(lines, "favorites: 0")
+        return lines
+    end
+
+    local characterKey = snapshot.characterKey
+    for _, favorite in ipairs(snapshot.favorites) do
+        local capture = self:GetCapturedVariant(
+            characterKey, favorite.sourceId, tonumber(favorite.specId), tonumber(favorite.itemId)
+        )
+        local metadataSource = capture and "captured_variant"
+            or (type(favorite.bonusIds) == "table" and #favorite.bonusIds > 0 and "favorite_bonus_ids")
+            or "legacy/no-capture"
+        table.insert(lines, table.concat({
+            "itemId=" .. DiagnosticValue(favorite.itemId),
+            "sourceId=" .. DiagnosticValue(favorite.sourceId),
+            "specId=" .. DiagnosticValue(favorite.specId),
+            "favoriteBonusIds=" .. DiagnosticList(favorite.bonusIds),
+            "selectedContext=" .. DiagnosticValue(capture and capture.selectedContext),
+            "selectedTrack=" .. DiagnosticValue(capture and (capture.selectedTrack or capture.selectedDifficulty)),
+            "selectedRank=" .. DiagnosticValue(capture and capture.selectedRank),
+            "variantKey=" .. DiagnosticValue(favorite.variantKey),
+            "itemLevel=" .. DiagnosticValue(favorite.itemLevel),
+            "qualityTypeExact=" .. DiagnosticValue(favorite.qualityType),
+            "metadataSource=" .. metadataSource,
+        }, " "))
+    end
+    return lines
 end

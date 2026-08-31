@@ -29,6 +29,22 @@ class KeystoneLootIntegrationRuntimeTests(unittest.TestCase):
         self.assertIsNotNone(registration, f"{event} callback must be registered")
         return registration["callback"]
 
+    @staticmethod
+    def show_item_tooltip(harness, item_link: str) -> None:
+        harness.globals._test.previewLink = item_link
+        harness.execute(
+            """
+            local callback = _test.tooltipCallbacks[Enum.TooltipDataType.Item]
+            assert(callback, "item tooltip callback must be registered")
+            callback({
+                KeystoneLootOwned = true,
+                GetItem = function()
+                    return "Preview item", _test.previewLink
+                end,
+            }, {})
+            """
+        )
+
     def test_module_exposes_isolated_integration_interface(self):
         self.assertTrue(
             (ROOT / "KeystoneLootIntegration.lua").is_file(),
@@ -44,6 +60,7 @@ class KeystoneLootIntegrationRuntimeTests(unittest.TestCase):
         self.assertIsNotNone(integration["RefreshCurrent"])
         self.assertIsNotNone(integration["Stop"])
         self.assertIsNotNone(integration["FormatDiagnostic"])
+        self.assertIsNotNone(integration["FormatFavoriteDiagnostics"])
 
     def test_api_absent_writes_explicit_not_installed_state(self):
         harness, integration = self.make_harness()
@@ -141,7 +158,13 @@ class KeystoneLootIntegrationRuntimeTests(unittest.TestCase):
             _test.callbacks = {{}}
             _test.ready = true
             KeystoneLootAPI = {{
-                Event = {{ READY = "READY", FAVORITES_CHANGED = "FAVORITES_CHANGED" }},
+                Event = {{
+                    READY = "READY",
+                    FAVORITE_ADDED = "FAVORITE_ADDED",
+                    FAVORITE_REMOVED = "FAVORITE_REMOVED",
+                    FAVORITES_IMPORTED = "FAVORITES_IMPORTED",
+                    FAVORITES_CHANGED = "FAVORITES_CHANGED",
+                }},
                 GetVersion = function() return 2, "2.6.0" end,
                 IsReady = function() return _test.ready end,
                 GetCurrentCharacterKey = function() return _test.klKey end,
@@ -156,6 +179,11 @@ class KeystoneLootIntegrationRuntimeTests(unittest.TestCase):
                     if sourceId == "catalyst" then return {{ type = "catalyst" }} end
                     if sourceId == "custom" then return {{ type = "custom" }} end
                     return nil
+                end,
+                GetItemSource = function(self, itemId)
+                    if itemId == 251121 then return "catalyst" end
+                    if itemId == 251122 then return "custom" end
+                    return 558
                 end,
                 GetItemInfo = function(self, itemId)
                     local items = {{
@@ -300,6 +328,442 @@ class KeystoneLootIntegrationRuntimeTests(unittest.TestCase):
         self.assertEqual(favorite["itemLevel"], 402)
         self.assertEqual(favorite["qualityType"], "EPIC")
         self.assertIn(":2:6652:1498", harness.evaluate("_test.lastDetailedLink"))
+
+    def test_normal_ui_favorite_without_bonus_ids_never_persists_base_metadata_as_exact(self):
+        harness, integration = self.make_harness()
+        self.install_ready_api(
+            harness,
+            """{{ sourceId = 558, specId = 255, itemId = 251119, tier = 3 }}""",
+        )
+        harness.execute(
+            """
+            _test.metadataReads = 0
+            C_Item = {
+                GetDetailedItemLevelInfo = function()
+                    _test.metadataReads = _test.metadataReads + 1
+                    return 28
+                end,
+                GetItemInfo = function()
+                    _test.metadataReads = _test.metadataReads + 1
+                    return "Sparse base item", "item:251119", 3
+                end,
+            }
+            """
+        )
+
+        self.start(harness, integration)
+
+        favorite = harness.stored_keystone_loot("Zul'jin-Spee")["favorites"][0]
+        self.assertEqual(favorite["variantKey"], "base")
+        self.assertNotIn("itemLevel", favorite)
+        self.assertNotIn("qualityType", favorite)
+        self.assertEqual(harness.evaluate("_test.metadataReads"), 0)
+
+    def test_non_keystoneloot_item_tooltip_is_never_used_for_favorite_capture(self):
+        harness, integration = self.make_harness()
+        self.install_ready_api(harness, "_test.favorites")
+        harness.execute(
+            """
+            _test.favorites = {}
+            KeystoneLootCharDB = {
+                ui = { selectedTab = "dungeons" },
+                filters = { specId = 255, dungeon = { track = "hero", rank = 1 } },
+            }
+            C_Item = {
+                GetDetailedItemLevelInfo = function() return 305 end,
+                GetItemInfo = function(link) return "Unrelated item", link, 4 end,
+            }
+            _test.previewLink = "item:251119::::::::90:255:::2:3206:12841"
+            _test.favorites = {
+                { sourceId = 558, specId = 255, itemId = 251119, tier = 3 },
+            }
+            """
+        )
+        self.start(harness, integration)
+        harness.execute(
+            """
+            _test.tooltipCallbacks[Enum.TooltipDataType.Item]({
+                GetItem = function() return "Unrelated item", _test.previewLink end,
+            }, {})
+            """
+        )
+        self.callback(harness, "FAVORITE_ADDED")(
+            "FAVORITE_ADDED", "Zul'jin-Spee-3", 251119, 255, 3
+        )
+        integration["RefreshCurrent"](integration)
+
+        favorite = harness.stored_keystone_loot("Zul'jin-Spee")["favorites"][0]
+        self.assertEqual(favorite["variantKey"], "base")
+        self.assertNotIn("itemLevel", favorite)
+
+    def test_favorite_added_captures_the_recent_exact_keystoneloot_preview(self):
+        harness, integration = self.make_harness()
+        self.install_ready_api(harness, "_test.favorites")
+        harness.execute(
+            """
+            _test.favorites = {}
+            KeystoneLootCharDB = {
+                ui = { selectedTab = "dungeons" },
+                filters = {
+                    classId = 3,
+                    specId = 255,
+                    slotId = 10,
+                    dungeon = { track = "hero", rank = 5 },
+                    raid = { difficulty = "heroic", rank = 1 },
+                },
+            }
+            C_Item = {
+                GetDetailedItemLevelInfo = function(link)
+                    _test.capturedMetadataLink = link
+                    return 318
+                end,
+                GetItemInfo = function(link)
+                    return "Hero preview", link, 4
+                end,
+            }
+            """
+        )
+        self.start(harness, integration)
+        exact_link = "item:251119::::::::90:255:::3:3206:12845:1674"
+        self.show_item_tooltip(harness, exact_link)
+        harness.execute(
+            """
+            _test.favorites = {
+                { sourceId = 558, specId = 255, itemId = 251119, tier = 3 },
+            }
+            """
+        )
+        self.callback(harness, "FAVORITE_ADDED")(
+            "FAVORITE_ADDED", "Zul'jin-Spee-3", 251119, 255, 3
+        )
+        self.callback(harness, "FAVORITES_CHANGED")(
+            "FAVORITES_CHANGED", "Zul'jin-Spee-3"
+        )
+        harness.run_timers()
+
+        favorite = harness.stored_keystone_loot("Zul'jin-Spee")["favorites"][0]
+        self.assertEqual(favorite["bonusIds"], [3206, 12845, 1674])
+        self.assertEqual(favorite["variantKey"], "bonus:1674,3206,12845")
+        self.assertEqual(favorite["itemLevel"], 318)
+        self.assertEqual(favorite["qualityType"], "EPIC")
+        capture = lua_to_python(
+            harness.globals.KeystoneSyncDB["Zul'jin-Spee"]["keystoneLootFavoriteCaptures"]
+        )
+        self.assertEqual(len(capture), 1)
+        captured = next(iter(capture.values()))
+        self.assertEqual(captured["selectedContext"], "dungeon")
+        self.assertEqual(captured["selectedTrack"], "hero")
+        self.assertEqual(captured["selectedRank"], 5)
+        self.assertEqual(captured["linkLevel"], 90)
+        self.assertEqual(captured["specId"], 255)
+        self.assertEqual(captured["itemContext"], 0)
+        self.assertEqual(captured["numBonusIds"], 3)
+
+    def test_filter_changes_after_capture_do_not_mutate_the_favorite_variant(self):
+        harness, integration = self.make_harness()
+        self.install_ready_api(harness, "_test.favorites")
+        harness.execute(
+            """
+            _test.favorites = {}
+            KeystoneLootCharDB = {
+                ui = { selectedTab = "dungeons" },
+                filters = {
+                    specId = 255,
+                    classId = 3,
+                    slotId = 10,
+                    dungeon = { track = "hero", rank = 1 },
+                },
+            }
+            C_Item = {
+                GetDetailedItemLevelInfo = function(link)
+                    return string.find(link, ":12841", 1, true) and 305 or 334
+                end,
+                GetItemInfo = function(link) return "Preview", link, 4 end,
+            }
+            """
+        )
+        self.start(harness, integration)
+        self.show_item_tooltip(
+            harness, "item:251119::::::::90:255:::2:3206:12841"
+        )
+        harness.execute(
+            "_test.favorites = { { sourceId = 558, specId = 255, itemId = 251119, tier = 3 } }"
+        )
+        self.callback(harness, "FAVORITE_ADDED")(
+            "FAVORITE_ADDED", "Zul'jin-Spee-3", 251119, 255, 3
+        )
+        harness.execute(
+            'KeystoneLootCharDB.filters.dungeon.track = "greatvault"; '
+            "KeystoneLootCharDB.filters.dungeon.rank = 6"
+        )
+        integration["RefreshCurrent"](integration)
+
+        favorite = harness.stored_keystone_loot("Zul'jin-Spee")["favorites"][0]
+        self.assertEqual(favorite["itemLevel"], 305)
+        self.assertEqual(favorite["bonusIds"], [3206, 12841])
+
+    def test_captured_variant_async_resolution_refreshes_once_and_survives_reload_state(self):
+        harness, integration = self.make_harness()
+        self.install_ready_api(harness, "_test.favorites")
+        harness.execute(
+            """
+            _test.favorites = {}
+            _test.itemCallbacks = {}
+            _test.itemReady = false
+            KeystoneLootCharDB = {
+                ui = { selectedTab = "dungeons" },
+                filters = { specId = 255, dungeon = { track = "hero", rank = 5 } },
+            }
+            C_Item = {
+                GetDetailedItemLevelInfo = function()
+                    return _test.itemReady and 318 or nil
+                end,
+                GetItemInfo = function(link)
+                    if not _test.itemReady then return nil end
+                    return "Hero preview", link, 4
+                end,
+            }
+            Item = { CreateFromItemLink = function()
+                return { ContinueOnItemLoad = function(_, callback)
+                    table.insert(_test.itemCallbacks, callback)
+                end }
+            end }
+            """
+        )
+        self.start(harness, integration)
+        self.show_item_tooltip(
+            harness, "item:251119::::::::90:255:::2:3206:12845"
+        )
+        harness.execute(
+            "_test.favorites = { { sourceId = 558, specId = 255, itemId = 251119, tier = 3 } }"
+        )
+        self.callback(harness, "FAVORITE_ADDED")(
+            "FAVORITE_ADDED", "Zul'jin-Spee-3", 251119, 255, 3
+        )
+        integration["RefreshCurrent"](integration)
+        self.assertEqual(harness.evaluate("#_test.itemCallbacks"), 1)
+        favorite = harness.stored_keystone_loot("Zul'jin-Spee")["favorites"][0]
+        self.assertEqual(favorite["bonusIds"], [3206, 12845])
+        self.assertNotIn("itemLevel", favorite)
+
+        harness.execute("_test.itemReady = true; _test.itemCallbacks[1]()")
+        favorite = harness.stored_keystone_loot("Zul'jin-Spee")["favorites"][0]
+        self.assertEqual(favorite["itemLevel"], 318)
+        self.assertEqual(favorite["qualityType"], "EPIC")
+        integration["RefreshCurrent"](integration)
+        self.assertEqual(harness.evaluate("#_test.itemCallbacks"), 1)
+
+        integration["Stop"](integration)
+        self.start(harness, integration)
+        favorite = harness.stored_keystone_loot("Zul'jin-Spee")["favorites"][0]
+        self.assertEqual(favorite["itemLevel"], 318)
+        self.assertEqual(harness.evaluate("#_test.itemCallbacks"), 1)
+
+    def test_stale_captured_variant_async_callbacks_honor_all_character_and_generation_guards(self):
+        for stale_action in ("generation", "keystonesync_character", "keystoneloot_character"):
+            with self.subTest(stale_action=stale_action):
+                harness, integration = self.make_harness()
+                self.install_ready_api(harness, "_test.favorites")
+                harness.execute(
+                    """
+                    _test.favorites = {}
+                    _test.itemCallbacks = {}
+                    _test.itemReady = false
+                    KeystoneLootCharDB = {
+                        ui = { selectedTab = "dungeons" },
+                        filters = { specId = 255, dungeon = { track = "hero", rank = 5 } },
+                    }
+                    C_Item = {
+                        GetDetailedItemLevelInfo = function()
+                            return _test.itemReady and 318 or nil
+                        end,
+                        GetItemInfo = function(link)
+                            if not _test.itemReady then return nil end
+                            return "Hero preview", link, 4
+                        end,
+                    }
+                    Item = { CreateFromItemLink = function()
+                        return { ContinueOnItemLoad = function(_, callback)
+                            table.insert(_test.itemCallbacks, callback)
+                        end }
+                    end }
+                    """
+                )
+                self.start(harness, integration)
+                self.show_item_tooltip(
+                    harness, "item:251119::::::::90:255:::2:3206:12845"
+                )
+                harness.execute(
+                    "_test.favorites = { { sourceId = 558, specId = 255, itemId = 251119, tier = 3 } }"
+                )
+                self.callback(harness, "FAVORITE_ADDED")(
+                    "FAVORITE_ADDED", "Zul'jin-Spee-3", 251119, 255, 3
+                )
+                self.assertEqual(harness.evaluate("#_test.itemCallbacks"), 1)
+
+                if stale_action == "generation":
+                    integration["Stop"](integration)
+                elif stale_action == "keystonesync_character":
+                    harness.execute('_test.ksKey = "Other-Realm-Historical"')
+                else:
+                    harness.execute('_test.klKey = "Other-Realm-2"')
+                harness.execute("_test.itemReady = true; _test.itemCallbacks[1]()")
+
+                capture = next(
+                    iter(
+                        harness.globals.KeystoneSyncDB["Zul'jin-Spee"][
+                            "keystoneLootFavoriteCaptures"
+                        ].values()
+                    )
+                )
+                self.assertIsNone(capture["itemLevel"])
+                self.assertIsNone(capture["qualityType"])
+
+    def test_remove_then_readd_replaces_the_captured_variant(self):
+        harness, integration = self.make_harness()
+        self.install_ready_api(harness, "_test.favorites")
+        harness.execute(
+            """
+            _test.favorites = {}
+            KeystoneLootCharDB = {
+                ui = { selectedTab = "dungeons" },
+                filters = { specId = 255, classId = 3, slotId = 10,
+                    dungeon = { track = "hero", rank = 1 } },
+            }
+            C_Item = {
+                GetDetailedItemLevelInfo = function(link)
+                    return string.find(link, ":12841", 1, true) and 305 or 334
+                end,
+                GetItemInfo = function(link) return "Preview", link, 4 end,
+            }
+            """
+        )
+        self.start(harness, integration)
+        self.show_item_tooltip(
+            harness, "item:251119::::::::90:255:::2:3206:12841"
+        )
+        harness.execute(
+            "_test.favorites = { { sourceId = 558, specId = 255, itemId = 251119, tier = 3 } }"
+        )
+        self.callback(harness, "FAVORITE_ADDED")(
+            "FAVORITE_ADDED", "Zul'jin-Spee-3", 251119, 255, 3
+        )
+
+        harness.execute("_test.favorites = {}")
+        self.callback(harness, "FAVORITE_REMOVED")(
+            "FAVORITE_REMOVED", "Zul'jin-Spee-3", 251119, 255
+        )
+        self.assertEqual(
+            len(
+                list(
+                    harness.globals.KeystoneSyncDB["Zul'jin-Spee"][
+                        "keystoneLootFavoriteCaptures"
+                    ].keys()
+                )
+            ),
+            0,
+        )
+
+        harness.execute(
+            'KeystoneLootCharDB.filters.dungeon.track = "greatvault"; '
+            "KeystoneLootCharDB.filters.dungeon.rank = 6"
+        )
+        self.show_item_tooltip(
+            harness, "item:251119::::::::90:255:::2:3206:12854"
+        )
+        harness.execute(
+            "_test.favorites = { { sourceId = 558, specId = 255, itemId = 251119, tier = 3 } }"
+        )
+        self.callback(harness, "FAVORITE_ADDED")(
+            "FAVORITE_ADDED", "Zul'jin-Spee-3", 251119, 255, 3
+        )
+        integration["RefreshCurrent"](integration)
+
+        favorite = harness.stored_keystone_loot("Zul'jin-Spee")["favorites"][0]
+        self.assertEqual(favorite["itemLevel"], 334)
+        self.assertEqual(favorite["bonusIds"], [3206, 12854])
+
+    def test_exact_item_link_parser_rejects_base_or_misaligned_bonus_payloads(self):
+        harness, integration = self.make_harness()
+        self.install_ready_api(harness, "_test.favorites")
+        harness.execute(
+            """
+            _test.favorites = {}
+            KeystoneLootCharDB = {
+                ui = { selectedTab = "dungeons" },
+                filters = { dungeon = { track = "hero", rank = 1 } },
+            }
+            C_Item = {
+                GetDetailedItemLevelInfo = function() return 28 end,
+                GetItemInfo = function(link) return "Sparse", link, 3 end,
+            }
+            """
+        )
+        self.start(harness, integration)
+        self.show_item_tooltip(harness, "item:251119")
+        harness.execute(
+            "_test.favorites = { { sourceId = 558, specId = 255, itemId = 251119, tier = 3 } }"
+        )
+        self.callback(harness, "FAVORITE_ADDED")(
+            "FAVORITE_ADDED", "Zul'jin-Spee-3", 251119, 255, 3
+        )
+        integration["RefreshCurrent"](integration)
+
+        favorite = harness.stored_keystone_loot("Zul'jin-Spee")["favorites"][0]
+        self.assertNotIn("itemLevel", favorite)
+        self.assertNotIn("qualityType", favorite)
+
+        self.show_item_tooltip(
+            harness, "item:251119::::::::90:255:::3:3206:12841"
+        )
+        self.callback(harness, "FAVORITE_ADDED")(
+            "FAVORITE_ADDED", "Zul'jin-Spee-3", 251119, 255, 3
+        )
+        integration["RefreshCurrent"](integration)
+        favorite = harness.stored_keystone_loot("Zul'jin-Spee")["favorites"][0]
+        self.assertNotIn("itemLevel", favorite)
+        self.assertNotIn("qualityType", favorite)
+
+    def test_preview_is_rejected_when_keystoneloot_filter_context_changes_before_add(self):
+        harness, integration = self.make_harness()
+        self.install_ready_api(harness, "_test.favorites")
+        harness.execute(
+            """
+            _test.favorites = {}
+            KeystoneLootCharDB = {
+                ui = { selectedTab = "dungeons" },
+                filters = { specId = 255, dungeon = { track = "hero", rank = 1 } },
+            }
+            C_Item = {
+                GetDetailedItemLevelInfo = function() return 305 end,
+                GetItemInfo = function(link) return "Hero", link, 4 end,
+            }
+            """
+        )
+        self.start(harness, integration)
+        self.show_item_tooltip(
+            harness, "item:251119::::::::90:255:::2:3206:12841"
+        )
+        harness.execute(
+            """
+            KeystoneLootCharDB.filters.dungeon.track = "greatvault"
+            KeystoneLootCharDB.filters.dungeon.rank = 6
+            _test.favorites = {
+                { sourceId = 558, specId = 255, itemId = 251119, tier = 3 },
+            }
+            """
+        )
+        self.callback(harness, "FAVORITE_ADDED")(
+            "FAVORITE_ADDED", "Zul'jin-Spee-3", 251119, 255, 3
+        )
+        integration["RefreshCurrent"](integration)
+
+        favorite = harness.stored_keystone_loot("Zul'jin-Spee")["favorites"][0]
+        self.assertEqual(favorite["variantKey"], "base")
+        self.assertNotIn("itemLevel", favorite)
+        self.assertIsNone(
+            harness.globals.KeystoneSyncDB["Zul'jin-Spee"]["keystoneLootFavoriteCaptures"]
+        )
 
     def test_exact_variant_quality_maps_rare_and_unknown_safely(self):
         harness, integration = self.make_harness()
@@ -522,6 +986,51 @@ class KeystoneLootIntegrationRuntimeTests(unittest.TestCase):
                     expected,
                 )
 
+    def test_favorite_diagnostics_distinguish_captured_and_legacy_metadata(self):
+        harness, integration = self.make_harness()
+        self.install_ready_api(harness, "_test.favorites")
+        harness.execute(
+            """
+            _test.favorites = {
+                { sourceId = 558, specId = 255, itemId = 251119, tier = 3 },
+                { sourceId = 558, specId = 255, itemId = 251120, tier = 2 },
+            }
+            KeystoneLootCharDB = {
+                ui = { selectedTab = "dungeons" },
+                filters = { specId = 255, dungeon = { track = "hero", rank = 5 } },
+            }
+            C_Item = {
+                GetDetailedItemLevelInfo = function() return 318 end,
+                GetItemInfo = function(link) return "Hero preview", link, 4 end,
+            }
+            """
+        )
+        self.start(harness, integration)
+        self.show_item_tooltip(
+            harness, "item:251119::::::::90:255:::2:3206:12845"
+        )
+        self.callback(harness, "FAVORITE_ADDED")(
+            "FAVORITE_ADDED", "Zul'jin-Spee-3", 251119, 255, 3
+        )
+        integration["RefreshCurrent"](integration)
+
+        lines = lua_to_python(
+            integration["FormatFavoriteDiagnostics"](
+                integration, harness.globals.KeystoneSyncDB["Zul'jin-Spee"]["keystoneLoot"]
+            )
+        )
+        self.assertEqual(lines[0], "KeystoneSync KeystoneLoot diagnostic")
+        captured = next(line for line in lines if "itemId=251119" in line)
+        legacy = next(line for line in lines if "itemId=251120" in line)
+        self.assertIn("selectedTrack=hero", captured)
+        self.assertIn("selectedRank=5", captured)
+        self.assertIn("itemLevel=318", captured)
+        self.assertIn("qualityTypeExact=EPIC", captured)
+        self.assertIn("metadataSource=captured_variant", captured)
+        self.assertIn("itemLevel=unavailable", legacy)
+        self.assertIn("qualityTypeExact=unavailable", legacy)
+        self.assertIn("metadataSource=legacy/no-capture", legacy)
+
     def test_start_registers_only_public_ready_and_aggregate_change_callbacks(self):
         harness, integration = self.make_harness()
         self.install_ready_api(harness, "{}")
@@ -529,7 +1038,16 @@ class KeystoneLootIntegrationRuntimeTests(unittest.TestCase):
         self.start(harness, integration)
 
         events = set(harness.globals._test.callbacks.keys())
-        self.assertEqual(events, {"READY", "FAVORITES_CHANGED"})
+        self.assertEqual(
+            events,
+            {
+                "READY",
+                "FAVORITE_ADDED",
+                "FAVORITE_REMOVED",
+                "FAVORITES_IMPORTED",
+                "FAVORITES_CHANGED",
+            },
+        )
         self.assertEqual(harness.evaluate("_test.favoriteCalls"), 1)
 
     def test_later_ready_callback_writes_one_authoritative_snapshot(self):
@@ -689,6 +1207,18 @@ class KeystoneSyncIntegrationLifecycleTests(unittest.TestCase):
                 for line in lua_to_python(harness.globals._test.prints)
             )
         )
+
+    def test_keystoneloot_diagnostic_command_prints_safe_favorite_details(self):
+        harness = self.make_runtime()
+        self.fire(harness, "PLAYER_LOGIN")
+        harness.execute("_test.integrationCalls = {}; _test.prints = {}")
+
+        harness.globals.SlashCmdList["KEYSTONESYNC"]("kl")
+
+        self.assertEqual(self.calls(harness), ["refresh", "favorite-diagnostic"])
+        prints = lua_to_python(harness.globals._test.prints)
+        self.assertTrue(any("KeystoneSync KeystoneLoot diagnostic" in line for line in prints))
+        self.assertTrue(any("metadataSource=legacy/no-capture" in line for line in prints))
 
     def test_integration_exception_cannot_interrupt_normal_character_save(self):
         harness = self.make_runtime()

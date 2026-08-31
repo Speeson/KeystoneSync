@@ -71,6 +71,22 @@ local function PrintKeystoneLootDiagnostic(snapshot)
     end
 end
 
+local function PrintKeystoneLootFavoriteDiagnostics(snapshot)
+    if not KeystoneLootIntegration or type(KeystoneLootIntegration.FormatFavoriteDiagnostics) ~= "function" then
+        return
+    end
+
+    local ok, lines = pcall(KeystoneLootIntegration.FormatFavoriteDiagnostics, KeystoneLootIntegration, snapshot)
+    if not ok or type(lines) ~= "table" then
+        return
+    end
+    for _, line in ipairs(lines) do
+        if type(line) == "string" and line ~= "" then
+            print(PREFIX .. " " .. line)
+        end
+    end
+end
+
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("PLAYER_LOGOUT")
@@ -807,8 +823,13 @@ frame:SetScript("OnEvent", function(self, event)
 end)
 
 SLASH_KEYSTONESYNC1 = "/ksync"
-SlashCmdList["KEYSTONESYNC"] = function()
+SlashCmdList["KEYSTONESYNC"] = function(message)
     local keystoneLootSnapshot = SaveCharacterData("MANUAL_COMMAND", true)
+    local command = type(message) == "string" and string.lower(string.match(message, "^%s*(.-)%s*$")) or ""
+    if command == "kl" or command == "keystoneloot" then
+        PrintKeystoneLootFavoriteDiagnostics(keystoneLootSnapshot)
+        return
+    end
     PrintCurrentKeystone()
     PrintKeystoneLootDiagnostic(keystoneLootSnapshot)
 end

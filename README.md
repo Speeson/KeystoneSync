@@ -47,10 +47,18 @@ character key, capture timestamp, normalized favorites, and read-only Voidcore s
 Favorite identity uses `sourceId`, `specId`, `itemId`, numeric `tier`, and a normalized
 bonus-based `variantKey`; optional enrichment includes `sourceType`, `slotId`, `icon`,
 `bonusIds`, `gems`, `enchant`, exact item level, and exact in-game quality. Item level
-and quality remain nullable while WoW loads an item. Guarded callbacks refresh only the
-same active character snapshot, while a small session cache avoids repeated item loads.
+and quality remain nullable while WoW loads an item. Normal KeystoneLoot UI Favorites do
+not store the selected upgrade-track bonuses, so KeystoneSync captures the exact public
+item-tooltip hyperlink when `FAVORITE_ADDED` fires and retains that variant in its own
+character record. Guarded callbacks refresh only the same active character snapshot.
 Dungeon `sourceId` values remain KeystoneLoot challenge mode IDs. Voidcore `usedItems` is
 a sorted list of numeric item IDs marked as used.
+
+Favorites created before this capture support, or imported without trustworthy bonus IDs,
+remain deliberately nullable: KeystoneSync never labels the sparse base item level or quality
+as exact. Remove the Favorite, select the intended track/rank, and add it again once to capture
+the exact variant. Later filter changes do not alter an already captured Favorite; removing it
+clears the capture so a subsequent add can replace it.
 
 An empty `favorites = {}` from a supported, ready KeystoneLoot API is authoritative and
 replaces an older wishlist. KeystoneSync never backfills historical character entries
@@ -75,6 +83,11 @@ these additive exact-variant fields while remaining compatible with older snapsh
 Forces an immediate save and prints the stored keystone for the current character in the chat window.
 When available, the same save performs exactly one KeystoneLoot refresh and prints one
 concise integration diagnostic without listing wishlist items.
+
+Use `/ksync kl` for a safe per-Favorite KeystoneLoot diagnostic. It reports only item/source/spec
+identity, Favorite bonus IDs, captured track/rank context, variant key, exact item level/quality,
+and metadata source. It never prints account identifiers, authentication data, or unrelated
+SavedVariables.
 
 ## SavedVariables location
 

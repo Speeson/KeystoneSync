@@ -15,6 +15,19 @@ _test = {
     frames = {},
     timers = {},
     prints = {},
+    tooltipCallbacks = {},
+}
+
+Enum = {
+    TooltipDataType = {
+        Item = 0,
+    },
+}
+
+TooltipDataProcessor = {
+    AddTooltipPostCall = function(dataType, callback)
+        _test.tooltipCallbacks[dataType] = callback
+    end,
 }
 
 function CreateFrame()
@@ -202,6 +215,11 @@ class LuaAddonHarness:
                     Record("diagnostic")
                     _test.diagnosticState = snapshot and snapshot.state or nil
                     return "KeystoneLoot diagnostic"
+                end,
+                FormatFavoriteDiagnostics = function(self, snapshot)
+                    Record("favorite-diagnostic")
+                    _test.diagnosticState = snapshot and snapshot.state or nil
+                    return { "KeystoneSync KeystoneLoot diagnostic", "metadataSource=legacy/no-capture" }
                 end,
             }
             """
