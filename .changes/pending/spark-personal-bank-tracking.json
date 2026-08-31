@@ -1,0 +1,10 @@
+{
+  "components": ["addon"],
+  "type": "patch",
+  "category": "fixed",
+  "summary": "Corrige el seguimiento de Spark of Tides en el banco personal.",
+  "details": [
+    "Incluye el banco personal normal y el banco de componentes del personaje.",
+    "Excluye expresamente el banco de hermandad de guerra y conserva el ultimo dato bancario fiable."
+  ]
+}

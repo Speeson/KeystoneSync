@@ -28,6 +28,25 @@ On every login and logout, KeystoneSync writes the current character's keystone 
 
 Only characters at level 90 or above are tracked.
 
+### Spark of Tides storage semantics
+
+Spark of Tides (`itemId = 274476`) is a physical-item count for the current
+character. `currencies.sparksOfTides.itemQuantity` (also exposed through the
+compatibility aliases `quantity` and `totalItemQuantity`) is the carried amount
+plus the last trustworthy character-specific bank amount. `inventoryQuantity`
+is the amount carried in normal bags and the equipped reagent bag.
+
+`bankQuantity` includes the normal personal character bank and personal Reagent
+Bank. It never includes the Warband/Account Bank. The addon uses explicit
+`C_Item.GetItemCount` arguments and captures a trustworthy bank snapshot while
+the personal bank is open. `bankQuantityKnown` identifies a valid snapshot and
+`bankUpdatedAt` records its capture time. Before the first bank access the bank
+amount is unknown; after a trustworthy capture, login and reload preserve that
+character's last known amount instead of replacing it with a false zero.
+
+Tidal Spark Dust (`currencyId = 3509`) remains independent progression data and
+is never used to derive the current physical Spark count.
+
 ## Optional KeystoneLoot integration
 
 [KeystoneLoot](https://github.com/Wolkenschutz/KeystoneLoot) is an optional dependency.

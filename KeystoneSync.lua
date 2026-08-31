@@ -26,6 +26,7 @@ local TROVEHUNTERS_BOUNTY_ITEM_ID = 274374
 local TROVEHUNTERS_BOUNTY_QUEST_ID = 86371
 local TROVEHUNTERS_BOUNTY_BUFF_SPELL_ID = 1293799
 local pendingSeasonCaptureKey = nil
+local personalBankAccessible = false
 local GetCharacterKey
 
 local function RefreshKeystoneLoot()
@@ -96,6 +97,8 @@ frame:RegisterEvent("MYTHIC_PLUS_NEW_WEEKLY_RECORD")
 frame:RegisterEvent("CURRENCY_DISPLAY_UPDATE")
 frame:RegisterEvent("QUEST_LOG_UPDATE")
 frame:RegisterEvent("BAG_UPDATE_DELAYED")
+frame:RegisterEvent("BANKFRAME_OPENED")
+frame:RegisterEvent("BANKFRAME_CLOSED")
 frame:RegisterEvent("CHALLENGE_MODE_COMPLETED")
 
 GetCharacterKey = function()
@@ -350,6 +353,47 @@ local function GetPreyHunts(prev)
     return result
 end
 
+local function GetSparkQuantities(prev, bankDataAuthoritative)
+    local carriedQuantity = C_Item.GetItemCount(
+        SPARK_OF_TIDES_ITEM_ID,
+        false,
+        false,
+        false,
+        false
+    ) or 0
+    local previousSpark = prev and prev.currencies and prev.currencies.sparksOfTides
+    local bankQuantity = nil
+    local bankQuantityKnown = false
+    local bankUpdatedAt = nil
+
+    if bankDataAuthoritative then
+        local characterOwnedQuantity = C_Item.GetItemCount(
+            SPARK_OF_TIDES_ITEM_ID,
+            true,
+            false,
+            true,
+            false
+        ) or carriedQuantity
+        bankQuantity = math.max(0, characterOwnedQuantity - carriedQuantity)
+        bankQuantityKnown = true
+        bankUpdatedAt = time()
+    elseif previousSpark
+        and previousSpark.bankQuantityKnown == true
+        and type(previousSpark.bankQuantity) == "number" then
+        bankQuantity = math.max(0, previousSpark.bankQuantity)
+        bankQuantityKnown = true
+        bankUpdatedAt = previousSpark.bankUpdatedAt
+    end
+
+    return {
+        carriedQuantity = carriedQuantity,
+        bankQuantity = bankQuantity,
+        bankQuantityKnown = bankQuantityKnown,
+        bankUpdatedAt = bankUpdatedAt,
+        itemQuantity = carriedQuantity + (bankQuantity or 0),
+    }
+end
+
 local function GetCurrencyData(prev)
     local result = {}
 
@@ -386,17 +430,18 @@ local function GetCurrencyData(prev)
     end
 
     local sparkDust = result.tidalSparkDust
-    local sparkInventoryCount = CountItemInBags(SPARK_OF_TIDES_ITEM_ID)
-    local sparkTotalCount = C_Item.GetItemCount(SPARK_OF_TIDES_ITEM_ID, true) or 0
-    local sparkItemCount = math.max(sparkInventoryCount, sparkTotalCount)
+    local spark = GetSparkQuantities(prev, personalBankAccessible)
 
     result.sparksOfTides = {
         itemID = SPARK_OF_TIDES_ITEM_ID,
         currencyID = TIDAL_SPARK_DUST_CURRENCY_ID,
-        quantity = sparkItemCount,
-        itemQuantity = sparkItemCount,
-        inventoryQuantity = sparkInventoryCount,
-        totalItemQuantity = sparkTotalCount,
+        quantity = spark.itemQuantity,
+        itemQuantity = spark.itemQuantity,
+        inventoryQuantity = spark.carriedQuantity,
+        totalItemQuantity = spark.itemQuantity,
+        bankQuantity = spark.bankQuantity,
+        bankQuantityKnown = spark.bankQuantityKnown,
+        bankUpdatedAt = spark.bankUpdatedAt,
         dustQuantity = sparkDust and (sparkDust.quantity or sparkDust.trackedQuantity or sparkDust.totalEarned) or 0,
         dustMaxQuantity = sparkDust and sparkDust.maxQuantity or 0,
         dustTotalEarned = sparkDust and sparkDust.totalEarned or 0,
@@ -808,13 +853,21 @@ end
 
 frame:SetScript("OnEvent", function(self, event)
     if event == "PLAYER_LOGIN" then
+        personalBankAccessible = false
         SaveCharacterData(event, false, false)
         StartKeystoneLootIntegration()
         ScheduleSeasonCapture()
     elseif event == "PLAYER_LOGOUT" then
         pendingSeasonCaptureKey = nil
+        personalBankAccessible = false
         SaveCharacterData(event, false)
         StopKeystoneLootIntegration()
+    elseif event == "BANKFRAME_OPENED" then
+        personalBankAccessible = true
+        SaveCharacterData(event, false)
+    elseif event == "BANKFRAME_CLOSED" then
+        personalBankAccessible = false
+        SaveCharacterData(event, false)
     elseif event == "CHALLENGE_MODE_COMPLETED" or event == "MYTHIC_PLUS_NEW_WEEKLY_RECORD" then
         SaveCharacterData(event, true)
     else

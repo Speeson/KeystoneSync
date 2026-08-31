@@ -169,8 +169,23 @@ class LuaAddonHarness:
             }
             C_QuestLog = { IsQuestFlaggedCompleted = function() return false end }
             C_CurrencyInfo = { GetCurrencyInfo = function() return nil end }
+            _test.sparkCarriedCount = 0
+            _test.sparkCharacterOwnedCount = 0
+            _test.itemCountCalls = {}
             C_Item = {
-                GetItemCount = function() return 0 end,
+                GetItemCount = function(itemInfo, includeBank, includeUses, includeReagentBank, includeAccountBank)
+                    table.insert(_test.itemCountCalls, {
+                        itemInfo,
+                        includeBank,
+                        includeUses,
+                        includeReagentBank,
+                        includeAccountBank,
+                    })
+                    if includeBank == true and includeReagentBank == true then
+                        return _test.sparkCharacterOwnedCount
+                    end
+                    return _test.sparkCarriedCount
+                end,
                 GetItemIconByID = function() return nil end,
             }
             C_PlayerInfo = { GetPlayerMythicPlusRatingSummary = function() return nil end }
