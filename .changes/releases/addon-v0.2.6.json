@@ -1,0 +1,12 @@
+{
+  "component": "addon",
+  "current_version": "0.2.5",
+  "version": "0.2.6",
+  "bump": "patch",
+  "tag": "v0.2.6",
+  "release_name": "KeystoneSync 0.2.6",
+  "asset": "KeystoneSync-v0.2.6.zip",
+  "changesets": [
+    "spark-personal-bank-tracking.json"
+  ]
+}
