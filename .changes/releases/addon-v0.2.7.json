@@ -1,0 +1,12 @@
+{
+  "component": "addon",
+  "current_version": "0.2.6",
+  "version": "0.2.7",
+  "bump": "patch",
+  "tag": "v0.2.7",
+  "release_name": "KeystoneSync 0.2.7",
+  "asset": "KeystoneSync-v0.2.7.zip",
+  "changesets": [
+    "spark-container-counting.json"
+  ]
+}
