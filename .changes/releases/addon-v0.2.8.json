@@ -1,0 +1,13 @@
+{
+  "component": "addon",
+  "current_version": "0.2.7",
+  "version": "0.2.8",
+  "bump": "patch",
+  "tag": "v0.2.8",
+  "release_name": "KeystoneSync 0.2.8",
+  "asset": "KeystoneSync-v0.2.8.zip",
+  "changesets": [
+    "keystoneloot-cross-spec-variant-capture.json",
+    "savedvariables-instance-id.json"
+  ]
+}
