@@ -133,6 +133,26 @@ class LuaAddonHarness:
                     Activities = 2,
                     World = 3,
                 },
+                BagIndex = {
+                    Backpack = 0,
+                    Bag_1 = 1,
+                    Bag_2 = 2,
+                    Bag_3 = 3,
+                    Bag_4 = 4,
+                    ReagentBag = 5,
+                    CharacterBankTab_1 = 6,
+                    CharacterBankTab_2 = 7,
+                    CharacterBankTab_3 = 8,
+                    CharacterBankTab_4 = 9,
+                    CharacterBankTab_5 = 10,
+                    CharacterBankTab_6 = 11,
+                    AccountBankTab_1 = 12,
+                },
+                BankType = {
+                    Character = 0,
+                    Guild = 1,
+                    Account = 2,
+                },
             }
 
             function UnitLevel() return 90 end
@@ -153,10 +173,39 @@ class LuaAddonHarness:
                 GetSeasonBestForMap = function() return nil, nil end,
                 GetSeasonBestAffixScoreInfoForMap = function() return {}, 0 end,
             }
+            _test.containerItems = {}
+            _test.containerAPIsAvailable = true
             C_Container = {
-                GetContainerNumSlots = function() return 0 end,
+                GetContainerNumSlots = function(containerIndex)
+                    if not _test.containerAPIsAvailable then return nil end
+                    local items = _test.containerItems[containerIndex]
+                    if not items then return 0 end
+                    local highestSlot = 0
+                    for slot in pairs(items) do
+                        highestSlot = math.max(highestSlot, slot)
+                    end
+                    return highestSlot
+                end,
                 GetContainerItemLink = function() return nil end,
-                GetContainerItemInfo = function() return nil end,
+                GetContainerItemInfo = function(containerIndex, slotIndex)
+                    if not _test.containerAPIsAvailable then return nil end
+                    local items = _test.containerItems[containerIndex]
+                    return items and items[slotIndex] or nil
+                end,
+            }
+            _test.characterBankTabs = { Enum.BagIndex.CharacterBankTab_1 }
+            _test.accountBankTabs = { Enum.BagIndex.AccountBankTab_1 }
+            _test.requestedBankTypes = {}
+            C_Bank = {
+                FetchPurchasedBankTabIDs = function(bankType)
+                    table.insert(_test.requestedBankTypes, bankType)
+                    if bankType == Enum.BankType.Character then
+                        return _test.characterBankTabs
+                    elseif bankType == Enum.BankType.Account then
+                        return _test.accountBankTabs
+                    end
+                    return {}
+                end,
             }
             C_ChallengeMode = {
                 GetMapUIInfo = function() return nil end,
@@ -169,8 +218,6 @@ class LuaAddonHarness:
             }
             C_QuestLog = { IsQuestFlaggedCompleted = function() return false end }
             C_CurrencyInfo = { GetCurrencyInfo = function() return nil end }
-            _test.sparkCarriedCount = 0
-            _test.sparkCharacterOwnedCount = 0
             _test.itemCountCalls = {}
             C_Item = {
                 GetItemCount = function(itemInfo, includeBank, includeUses, includeReagentBank, includeAccountBank)
@@ -181,10 +228,7 @@ class LuaAddonHarness:
                         includeReagentBank,
                         includeAccountBank,
                     })
-                    if includeBank == true and includeReagentBank == true then
-                        return _test.sparkCharacterOwnedCount
-                    end
-                    return _test.sparkCarriedCount
+                    return 0
                 end,
                 GetItemIconByID = function() return nil end,
             }

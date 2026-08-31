@@ -36,13 +36,22 @@ compatibility aliases `quantity` and `totalItemQuantity`) is the carried amount
 plus the last trustworthy character-specific bank amount. `inventoryQuantity`
 is the amount carried in normal bags and the equipped reagent bag.
 
-`bankQuantity` includes the normal personal character bank and personal Reagent
-Bank. It never includes the Warband/Account Bank. The addon uses explicit
-`C_Item.GetItemCount` arguments and captures a trustworthy bank snapshot while
-the personal bank is open. `bankQuantityKnown` identifies a valid snapshot and
+Spark location is counted directly from Retail containers rather than inferred
+from `C_Item.GetItemCount`. Carried storage explicitly enumerates
+`Enum.BagIndex.Backpack`, `Bag_1` through `Bag_4`, and `ReagentBag`.
+
+`bankQuantity` enumerates only the tab IDs returned by
+`C_Bank.FetchPurchasedBankTabIDs(Enum.BankType.Character)` while the personal
+bank is accessible. Retail 12.1 exposes the consolidated personal bank,
+including its reagent-capable character storage, through these Character tabs;
+it does not expose an additional personal Reagent Bank container alongside
+them. The addon never requests `Enum.BankType.Account`, so Warband/Account Bank
+tabs are excluded. `bankQuantityKnown` identifies a valid snapshot and
 `bankUpdatedAt` records its capture time. Before the first bank access the bank
-amount is unknown; after a trustworthy capture, login and reload preserve that
-character's last known amount instead of replacing it with a false zero.
+amount is unknown; after a trustworthy capture, login, reload, and bank close
+preserve that character's last known amount instead of replacing it with a
+false zero. `PLAYER_LOGOUT` also preserves the last normal-play Spark snapshot
+rather than rescanning containers during teardown.
 
 Tidal Spark Dust (`currencyId = 3509`) remains independent progression data and
 is never used to derive the current physical Spark count.

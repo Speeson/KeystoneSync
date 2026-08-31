@@ -1,0 +1,10 @@
+{
+  "components": ["addon"],
+  "type": "patch",
+  "category": "fixed",
+  "summary": "Corrige el conteo de Spark of Tides en bolsas y banco personal.",
+  "details": [
+    "Cuenta por separado la mochila, las bolsas equipadas y la bolsa de componentes.",
+    "Enumera solo las pestañas del banco personal del personaje, excluye el banco de hermandad de guerra y conserva el ultimo dato fiable al cerrar sesion."
+  ]
+}

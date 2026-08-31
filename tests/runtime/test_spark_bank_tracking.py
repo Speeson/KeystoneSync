@@ -4,28 +4,43 @@ from lua_harness import LuaAddonHarness, lua_to_python
 
 
 CHARACTER_KEY = "Zul'jin-Spee"
+SPARK_ITEM_ID = 274476
 
 
 class SparkBankTrackingTests(unittest.TestCase):
-    def make_runtime(self, carried=0, character_owned=0, previous_spark=None):
+    def make_runtime(self, containers=None, character_bank_tabs=None, previous_spark=None):
         harness = LuaAddonHarness()
         harness.install_keystonesync_wow_stubs()
-        harness.execute(
-            f"_test.sparkCarriedCount = {carried}; "
-            f"_test.sparkCharacterOwnedCount = {character_owned}"
-        )
+
+        if character_bank_tabs is not None:
+            tab_values = ", ".join(str(tab) for tab in character_bank_tabs)
+            harness.execute(f"_test.characterBankTabs = {{ {tab_values} }}")
+
+        for container, stacks in (containers or {}).items():
+            harness.execute(f"_test.containerItems[{container}] = {{}}")
+            for slot, (item_id, stack_count) in enumerate(stacks, start=1):
+                harness.execute(
+                    f"_test.containerItems[{container}][{slot}] = "
+                    f"{{ itemID = {item_id}, stackCount = {stack_count} }}"
+                )
+
         if previous_spark is not None:
-            bank_quantity = previous_spark.get("bankQuantity", 0)
-            known = "true" if previous_spark.get("bankQuantityKnown") else "false"
-            updated_at = previous_spark.get("bankUpdatedAt")
-            updated_at_lua = str(updated_at) if updated_at is not None else "nil"
+            fields = []
+            for key, value in previous_spark.items():
+                if isinstance(value, bool):
+                    encoded = "true" if value else "false"
+                elif value is None:
+                    encoded = "nil"
+                else:
+                    encoded = str(value)
+                fields.append(f"{key} = {encoded}")
             harness.execute(
                 "KeystoneSyncDB = {}; "
                 f"KeystoneSyncDB[\"{CHARACTER_KEY}\"] = {{ currencies = {{ sparksOfTides = {{"
-                f"bankQuantity = {bank_quantity}, bankQuantityKnown = {known}, "
-                f"bankUpdatedAt = {updated_at_lua}"
-                "} } }"
+                + ", ".join(fields)
+                + "} } }"
             )
+
         harness.load_addon_file("KeystoneSync.lua")
         return harness
 
@@ -40,135 +55,209 @@ class SparkBankTrackingTests(unittest.TestCase):
             harness.globals.KeystoneSyncDB[CHARACTER_KEY]["currencies"]["sparksOfTides"]
         )
 
-    def test_unknown_bank_state_keeps_carried_total_without_inventing_known_zero(self):
-        harness = self.make_runtime(carried=6, character_owned=6)
+    def test_normal_equipped_bag_is_counted_as_carried(self):
+        harness = self.make_runtime(containers={1: [(SPARK_ITEM_ID, 3)]})
 
         self.fire(harness, "PLAYER_LOGIN")
 
         spark = self.spark(harness)
-        self.assertEqual(spark["inventoryQuantity"], 6)
-        self.assertEqual(spark["itemQuantity"], 6)
-        self.assertEqual(spark["totalItemQuantity"], 6)
-        self.assertFalse(spark["bankQuantityKnown"])
-        self.assertNotIn("bankQuantity", spark)
-
-    def test_bank_open_captures_mixed_carried_and_personal_bank_total(self):
-        harness = self.make_runtime(carried=3, character_owned=6)
-        self.fire(harness, "PLAYER_LOGIN")
-
-        self.fire(harness, "BANKFRAME_OPENED")
-
-        spark = self.spark(harness)
-        self.assertEqual(spark["quantity"], 6)
-        self.assertEqual(spark["itemQuantity"], 6)
         self.assertEqual(spark["inventoryQuantity"], 3)
-        self.assertEqual(spark["totalItemQuantity"], 6)
-        self.assertEqual(spark["bankQuantity"], 3)
-        self.assertTrue(spark["bankQuantityKnown"])
-        self.assertEqual(spark["bankUpdatedAt"], 1780000000)
-
-    def test_bags_only_keeps_carried_total_and_authoritative_zero_bank(self):
-        harness = self.make_runtime(carried=6, character_owned=6)
-
-        self.fire(harness, "BANKFRAME_OPENED")
-
-        spark = self.spark(harness)
-        self.assertEqual(spark["itemQuantity"], 6)
-        self.assertEqual(spark["inventoryQuantity"], 6)
-        self.assertEqual(spark["bankQuantity"], 0)
-        self.assertTrue(spark["bankQuantityKnown"])
-
-    def test_reagent_bank_only_is_counted_as_character_personal_bank(self):
-        harness = self.make_runtime(carried=0, character_owned=1)
-
-        self.fire(harness, "BANKFRAME_OPENED")
-
-        spark = self.spark(harness)
-        self.assertEqual(spark["itemQuantity"], 1)
-        self.assertEqual(spark["bankQuantity"], 1)
-
-    def test_normal_personal_bank_only_is_counted(self):
-        harness = self.make_runtime(carried=0, character_owned=2)
-
-        self.fire(harness, "BANKFRAME_OPENED")
-
-        spark = self.spark(harness)
-        self.assertEqual(spark["itemQuantity"], 2)
-        self.assertEqual(spark["bankQuantity"], 2)
-
-    def test_all_banked_sparks_keep_the_total(self):
-        harness = self.make_runtime(carried=0, character_owned=3)
-
-        self.fire(harness, "BANKFRAME_OPENED")
-
-        spark = self.spark(harness)
         self.assertEqual(spark["itemQuantity"], 3)
-        self.assertEqual(spark["inventoryQuantity"], 0)
-        self.assertEqual(spark["bankQuantity"], 3)
 
-    def test_account_bank_only_never_leaks_into_character_total(self):
-        harness = self.make_runtime(carried=0, character_owned=0)
+    def test_backpack_is_counted_as_carried(self):
+        harness = self.make_runtime(containers={0: [(SPARK_ITEM_ID, 2)]})
 
-        self.fire(harness, "BANKFRAME_OPENED")
+        self.fire(harness, "PLAYER_LOGIN")
+
+        self.assertEqual(self.spark(harness)["inventoryQuantity"], 2)
+
+    def test_equipped_reagent_bag_is_counted_as_carried(self):
+        harness = self.make_runtime(containers={5: [(SPARK_ITEM_ID, 3)]})
+
+        self.fire(harness, "PLAYER_LOGIN")
 
         spark = self.spark(harness)
-        self.assertEqual(spark["itemQuantity"], 0)
-        self.assertEqual(spark["bankQuantity"], 0)
-        calls = lua_to_python(harness.globals._test.itemCountCalls)
-        self.assertTrue(calls)
-        self.assertTrue(all(call[4] is False for call in calls))
+        self.assertEqual(spark["inventoryQuantity"], 3)
+        self.assertEqual(spark["itemQuantity"], 3)
 
-    def test_item_count_calls_use_every_explicit_storage_argument(self):
-        harness = self.make_runtime(carried=3, character_owned=6)
-
-        self.fire(harness, "BANKFRAME_OPENED")
-
-        calls = lua_to_python(harness.globals._test.itemCountCalls)
-        self.assertIn([274476, False, False, False, False], calls)
-        self.assertIn([274476, True, False, True, False], calls)
-
-    def test_login_preserves_last_trustworthy_character_bank_snapshot(self):
+    def test_mixed_carried_containers_are_summed(self):
         harness = self.make_runtime(
-            carried=2,
-            character_owned=2,
-            previous_spark={
-                "bankQuantity": 3,
-                "bankQuantityKnown": True,
-                "bankUpdatedAt": 1779990000,
-            },
+            containers={
+                0: [(SPARK_ITEM_ID, 1)],
+                1: [(999999, 8), (SPARK_ITEM_ID, 1)],
+                5: [(SPARK_ITEM_ID, 2)],
+            }
         )
 
         self.fire(harness, "PLAYER_LOGIN")
 
-        spark = self.spark(harness)
-        self.assertEqual(spark["itemQuantity"], 5)
-        self.assertEqual(spark["bankQuantity"], 3)
-        self.assertTrue(spark["bankQuantityKnown"])
-        self.assertEqual(spark["bankUpdatedAt"], 1779990000)
+        self.assertEqual(self.spark(harness)["inventoryQuantity"], 4)
 
-    def test_bag_update_refreshes_snapshot_only_while_bank_is_open(self):
-        harness = self.make_runtime(carried=3, character_owned=6)
+    def test_unknown_bank_state_keeps_live_carried_total(self):
+        harness = self.make_runtime(containers={1: [(SPARK_ITEM_ID, 6)]})
+
+        self.fire(harness, "PLAYER_LOGIN")
+
+        spark = self.spark(harness)
+        self.assertEqual(spark["itemQuantity"], 6)
+        self.assertFalse(spark["bankQuantityKnown"])
+        self.assertNotIn("bankQuantity", spark)
+
+    def test_personal_character_bank_tabs_are_counted_independently(self):
+        harness = self.make_runtime(
+            containers={6: [(SPARK_ITEM_ID, 2)]},
+            character_bank_tabs=[6],
+        )
+
         self.fire(harness, "BANKFRAME_OPENED")
-        harness.execute("_test.sparkCarriedCount = 4; _test.sparkCharacterOwnedCount = 8")
+
+        spark = self.spark(harness)
+        self.assertEqual(spark["inventoryQuantity"], 0)
+        self.assertEqual(spark["bankQuantity"], 2)
+        self.assertEqual(spark["itemQuantity"], 2)
+        self.assertTrue(spark["bankQuantityKnown"])
+        self.assertEqual(spark["bankUpdatedAt"], 1780000000)
+
+    def test_real_reproduction_three_carried_plus_two_banked_is_five(self):
+        harness = self.make_runtime(
+            containers={
+                5: [(SPARK_ITEM_ID, 3)],
+                6: [(SPARK_ITEM_ID, 2)],
+            },
+            character_bank_tabs=[6],
+        )
+
+        self.fire(harness, "BANKFRAME_OPENED")
+
+        spark = self.spark(harness)
+        self.assertEqual(spark["inventoryQuantity"], 3)
+        self.assertEqual(spark["bankQuantity"], 2)
+        self.assertEqual(spark["itemQuantity"], 5)
+        self.assertEqual(spark["quantity"], 5)
+        self.assertEqual(spark["totalItemQuantity"], 5)
+
+    def test_all_banked_sparks_keep_the_total(self):
+        harness = self.make_runtime(
+            containers={11: [(SPARK_ITEM_ID, 3)]},
+            character_bank_tabs=[6, 11],
+        )
+
+        self.fire(harness, "BANKFRAME_OPENED")
+
+        spark = self.spark(harness)
+        self.assertEqual(spark["inventoryQuantity"], 0)
+        self.assertEqual(spark["bankQuantity"], 3)
+        self.assertEqual(spark["itemQuantity"], 3)
+
+    def test_account_bank_is_never_requested_or_counted(self):
+        harness = self.make_runtime(
+            containers={12: [(SPARK_ITEM_ID, 5)]},
+            character_bank_tabs=[6],
+        )
+
+        self.fire(harness, "BANKFRAME_OPENED")
+
+        spark = self.spark(harness)
+        self.assertEqual(spark["bankQuantity"], 0)
+        self.assertEqual(spark["itemQuantity"], 0)
+        self.assertEqual(lua_to_python(harness.globals._test.requestedBankTypes), [0])
+
+    def test_closed_bank_keeps_snapshot_but_refreshes_live_carried_count(self):
+        harness = self.make_runtime(
+            containers={1: [(SPARK_ITEM_ID, 1)], 6: [(SPARK_ITEM_ID, 2)]},
+            character_bank_tabs=[6],
+        )
+        self.fire(harness, "BANKFRAME_OPENED")
+        self.fire(harness, "BANKFRAME_CLOSED")
+        harness.execute(
+            f"_test.containerItems[1][1] = {{ itemID = {SPARK_ITEM_ID}, stackCount = 3 }}; "
+            "_test.containerItems[6] = nil"
+        )
 
         self.fire(harness, "BAG_UPDATE_DELAYED")
 
         spark = self.spark(harness)
-        self.assertEqual(spark["itemQuantity"], 8)
-        self.assertEqual(spark["bankQuantity"], 4)
+        self.assertEqual(spark["inventoryQuantity"], 3)
+        self.assertEqual(spark["bankQuantity"], 2)
+        self.assertEqual(spark["itemQuantity"], 5)
 
-    def test_bank_close_does_not_take_a_fresh_authoritative_read(self):
-        harness = self.make_runtime(carried=3, character_owned=6)
-        self.fire(harness, "BANKFRAME_OPENED")
-        harness.execute("_test.sparkCarriedCount = 3; _test.sparkCharacterOwnedCount = 99")
+    def test_bag_update_accepts_a_legitimate_live_zero(self):
+        harness = self.make_runtime(containers={1: [(SPARK_ITEM_ID, 3)]})
+        self.fire(harness, "PLAYER_LOGIN")
+        harness.execute("_test.containerItems[1] = nil")
 
-        self.fire(harness, "BANKFRAME_CLOSED")
+        self.fire(harness, "BAG_UPDATE_DELAYED")
 
         spark = self.spark(harness)
-        self.assertEqual(spark["itemQuantity"], 6)
-        self.assertEqual(spark["bankQuantity"], 3)
+        self.assertEqual(spark["inventoryQuantity"], 0)
+        self.assertEqual(spark["itemQuantity"], 0)
 
-    def test_current_bank_events_are_registered_without_removed_reagent_event(self):
+    def test_logout_preserves_last_trustworthy_spark_snapshot(self):
+        harness = self.make_runtime(
+            previous_spark={
+                "quantity": 5,
+                "itemQuantity": 5,
+                "inventoryQuantity": 3,
+                "totalItemQuantity": 5,
+                "bankQuantity": 2,
+                "bankQuantityKnown": True,
+                "bankUpdatedAt": 1779990000,
+            }
+        )
+        harness.execute("_test.containerAPIsAvailable = false")
+
+        self.fire(harness, "PLAYER_LOGOUT")
+
+        spark = self.spark(harness)
+        self.assertEqual(spark["quantity"], 5)
+        self.assertEqual(spark["itemQuantity"], 5)
+        self.assertEqual(spark["inventoryQuantity"], 3)
+        self.assertEqual(spark["totalItemQuantity"], 5)
+        self.assertEqual(spark["bankQuantity"], 2)
+        self.assertTrue(spark["bankQuantityKnown"])
+        self.assertEqual(spark["bankUpdatedAt"], 1779990000)
+
+    def test_spark_counting_does_not_use_aggregate_item_count(self):
+        harness = self.make_runtime(containers={1: [(SPARK_ITEM_ID, 3)]})
+
+        self.fire(harness, "PLAYER_LOGIN")
+
+        self.assertEqual(lua_to_python(harness.globals._test.itemCountCalls), [])
+
+    def test_logout_does_not_preserve_known_flag_without_a_bank_quantity(self):
+        harness = self.make_runtime(
+            previous_spark={
+                "quantity": 3,
+                "itemQuantity": 3,
+                "inventoryQuantity": 3,
+                "totalItemQuantity": 3,
+                "bankQuantityKnown": True,
+            }
+        )
+
+        self.fire(harness, "PLAYER_LOGOUT")
+
+        spark = self.spark(harness)
+        self.assertFalse(spark["bankQuantityKnown"])
+        self.assertNotIn("bankQuantity", spark)
+
+    def test_bank_open_refreshes_snapshot_while_bag_updates(self):
+        harness = self.make_runtime(
+            containers={1: [(SPARK_ITEM_ID, 3)], 6: [(SPARK_ITEM_ID, 2)]},
+            character_bank_tabs=[6],
+        )
+        self.fire(harness, "BANKFRAME_OPENED")
+        harness.execute(
+            f"_test.containerItems[6][1] = {{ itemID = {SPARK_ITEM_ID}, stackCount = 4 }}"
+        )
+
+        self.fire(harness, "BAG_UPDATE_DELAYED")
+
+        spark = self.spark(harness)
+        self.assertEqual(spark["bankQuantity"], 4)
+        self.assertEqual(spark["itemQuantity"], 7)
+
+    def test_current_bank_events_are_registered(self):
         harness = self.make_runtime()
         events = lua_to_python(harness.globals._test.frames[1]["events"])
 

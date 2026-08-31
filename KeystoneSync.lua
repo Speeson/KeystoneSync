@@ -353,31 +353,135 @@ local function GetPreyHunts(prev)
     return result
 end
 
-local function GetSparkQuantities(prev, bankDataAuthoritative)
-    local carriedQuantity = C_Item.GetItemCount(
-        SPARK_OF_TIDES_ITEM_ID,
-        false,
-        false,
-        false,
-        false
-    ) or 0
+local SPARK_CARRIED_BAG_KEYS = {
+    "Backpack",
+    "Bag_1",
+    "Bag_2",
+    "Bag_3",
+    "Bag_4",
+    "ReagentBag",
+}
+
+local function CountItemInContainers(itemID, containerIDs)
+    if not C_Container
+        or type(C_Container.GetContainerNumSlots) ~= "function"
+        or type(C_Container.GetContainerItemInfo) ~= "function"
+        or type(containerIDs) ~= "table" then
+        return nil
+    end
+
+    local ok, total = pcall(function()
+        local count = 0
+        for _, containerID in ipairs(containerIDs) do
+            local slots = C_Container.GetContainerNumSlots(containerID)
+            if type(slots) ~= "number" or (issecretvalue and issecretvalue(slots)) then
+                error("container slots unavailable")
+            end
+            for slot = 1, slots do
+                local info = C_Container.GetContainerItemInfo(containerID, slot)
+                if info then
+                    local foundItemID = info.itemID
+                    local stackCount = info.stackCount
+                    if issecretvalue and (issecretvalue(foundItemID) or issecretvalue(stackCount)) then
+                        error("container item unavailable")
+                    end
+                    if foundItemID == itemID then
+                        count = count + (type(stackCount) == "number" and stackCount or 0)
+                    end
+                end
+            end
+        end
+        return count
+    end)
+
+    if not ok or type(total) ~= "number" then
+        return nil
+    end
+    return math.max(0, total)
+end
+
+local function CountCarriedSparks()
+    local bagIndex = Enum and Enum.BagIndex
+    if type(bagIndex) ~= "table" then return nil end
+
+    local carriedContainers = {}
+    for _, key in ipairs(SPARK_CARRIED_BAG_KEYS) do
+        local containerID = bagIndex[key]
+        if type(containerID) ~= "number" then return nil end
+        table.insert(carriedContainers, containerID)
+    end
+
+    return CountItemInContainers(SPARK_OF_TIDES_ITEM_ID, carriedContainers)
+end
+
+local function CountPersonalBankSparks()
+    local bankType = Enum and Enum.BankType
+    if not C_Bank
+        or type(C_Bank.FetchPurchasedBankTabIDs) ~= "function"
+        or type(bankType) ~= "table"
+        or type(bankType.Character) ~= "number" then
+        return nil
+    end
+
+    local ok, characterBankTabs = pcall(C_Bank.FetchPurchasedBankTabIDs, bankType.Character)
+    if not ok or type(characterBankTabs) ~= "table" then
+        return nil
+    end
+    return CountItemInContainers(SPARK_OF_TIDES_ITEM_ID, characterBankTabs)
+end
+
+local function GetSparkQuantities(prev, bankDataAuthoritative, preservePreviousSnapshot)
     local previousSpark = prev and prev.currencies and prev.currencies.sparksOfTides
+
+    if preservePreviousSnapshot then
+        local carriedQuantity = previousSpark
+            and type(previousSpark.inventoryQuantity) == "number"
+            and math.max(0, previousSpark.inventoryQuantity)
+            or 0
+        local bankQuantityKnown = previousSpark
+            and previousSpark.bankQuantityKnown == true
+            and type(previousSpark.bankQuantity) == "number"
+            or false
+        local bankQuantity = bankQuantityKnown
+            and type(previousSpark.bankQuantity) == "number"
+            and math.max(0, previousSpark.bankQuantity)
+            or nil
+        local itemQuantity = previousSpark
+            and type(previousSpark.itemQuantity) == "number"
+            and math.max(0, previousSpark.itemQuantity)
+            or (carriedQuantity + (bankQuantity or 0))
+
+        return {
+            carriedQuantity = carriedQuantity,
+            bankQuantity = bankQuantity,
+            bankQuantityKnown = bankQuantityKnown,
+            bankUpdatedAt = previousSpark and previousSpark.bankUpdatedAt or nil,
+            itemQuantity = itemQuantity,
+        }
+    end
+
+    local carriedQuantity = CountCarriedSparks()
+    if type(carriedQuantity) ~= "number" then
+        carriedQuantity = previousSpark
+            and type(previousSpark.inventoryQuantity) == "number"
+            and math.max(0, previousSpark.inventoryQuantity)
+            or 0
+    end
     local bankQuantity = nil
     local bankQuantityKnown = false
     local bankUpdatedAt = nil
 
     if bankDataAuthoritative then
-        local characterOwnedQuantity = C_Item.GetItemCount(
-            SPARK_OF_TIDES_ITEM_ID,
-            true,
-            false,
-            true,
-            false
-        ) or carriedQuantity
-        bankQuantity = math.max(0, characterOwnedQuantity - carriedQuantity)
-        bankQuantityKnown = true
-        bankUpdatedAt = time()
-    elseif previousSpark
+        local currentBankQuantity = CountPersonalBankSparks()
+        if type(currentBankQuantity) == "number" then
+            bankQuantity = currentBankQuantity
+            bankQuantityKnown = true
+            bankUpdatedAt = time()
+        end
+    end
+
+    if not bankQuantityKnown
+        and previousSpark
         and previousSpark.bankQuantityKnown == true
         and type(previousSpark.bankQuantity) == "number" then
         bankQuantity = math.max(0, previousSpark.bankQuantity)
@@ -394,7 +498,7 @@ local function GetSparkQuantities(prev, bankDataAuthoritative)
     }
 end
 
-local function GetCurrencyData(prev)
+local function GetCurrencyData(prev, preserveSparkSnapshot)
     local result = {}
 
     for _, currencyDef in ipairs(CURRENCIES) do
@@ -430,7 +534,7 @@ local function GetCurrencyData(prev)
     end
 
     local sparkDust = result.tidalSparkDust
-    local spark = GetSparkQuantities(prev, personalBankAccessible)
+    local spark = GetSparkQuantities(prev, personalBankAccessible, preserveSparkSnapshot)
 
     result.sparksOfTides = {
         itemID = SPARK_OF_TIDES_ITEM_ID,
@@ -808,7 +912,7 @@ local function SaveCharacterData(reason, updateSeason, refreshKeystoneLoot)
     KeystoneSyncDB[key].keystoneWeeklyResetKey = keystone.weeklyResetKey
     KeystoneSyncDB[key].vault = GetVaultData()
     KeystoneSyncDB[key].preyHunts = GetPreyHunts(prev)
-    KeystoneSyncDB[key].currencies = GetCurrencyData(prev)
+    KeystoneSyncDB[key].currencies = GetCurrencyData(prev, reason == "PLAYER_LOGOUT")
     KeystoneSyncDB[key].money = GetMoneyData(prev, reason)
     if updateSeason then
         UpdateMythicPlusSeason(key, prev)
