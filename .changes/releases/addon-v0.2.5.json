@@ -1,0 +1,12 @@
+{
+  "component": "addon",
+  "current_version": "0.2.4",
+  "version": "0.2.5",
+  "bump": "patch",
+  "tag": "v0.2.5",
+  "release_name": "KeystoneSync 0.2.5",
+  "asset": "KeystoneSync-v0.2.5.zip",
+  "changesets": [
+    "keystoneloot-favorite-variant-capture.json"
+  ]
+}
