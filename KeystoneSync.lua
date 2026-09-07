@@ -17,8 +17,32 @@ local CURRENCIES = {
     { key = "tidalSparkDust", id = 3509 },
     { key = "cofferKeyShards", id = 3310 },
     { key = "restoredCofferKey", id = 3028 },
+    { key = "untaintedManaCrystals", id = 3356 },
     { key = "nebulousVoidcore", id = 3513, quantityId = 3418 },
 }
+
+local EQUIPMENT_SLOTS = {
+    { id = 1, name = "Head" },
+    { id = 2, name = "Neck" },
+    { id = 3, name = "Shoulder" },
+    { id = 15, name = "Back" },
+    { id = 5, name = "Chest" },
+    { id = 9, name = "Wrist" },
+    { id = 10, name = "Hands" },
+    { id = 6, name = "Waist" },
+    { id = 7, name = "Legs" },
+    { id = 8, name = "Feet" },
+    { id = 11, name = "Finger1" },
+    { id = 12, name = "Finger2" },
+    { id = 13, name = "Trinket1" },
+    { id = 14, name = "Trinket2" },
+    { id = 16, name = "MainHand" },
+    { id = 17, name = "OffHand" },
+}
+
+local OMNIUM_TRAIT_SYSTEM_ID = 48
+local OMNIUM_FALLBACK_TREE_ID = 1186
+local SNAPSHOT_REFRESH_DELAY_SECONDS = 0.4
 
 local SPARK_OF_TIDES_ITEM_ID = 274476
 local TIDAL_SPARK_DUST_CURRENCY_ID = 3509
@@ -26,6 +50,7 @@ local TROVEHUNTERS_BOUNTY_ITEM_ID = 274374
 local TROVEHUNTERS_BOUNTY_QUEST_ID = 86371
 local TROVEHUNTERS_BOUNTY_BUFF_SPELL_ID = 1293799
 local pendingSeasonCaptureKey = nil
+local snapshotRefreshPending = false
 local personalBankAccessible = false
 local GetCharacterKey
 
@@ -124,6 +149,13 @@ frame:RegisterEvent("BAG_UPDATE_DELAYED")
 frame:RegisterEvent("BANKFRAME_OPENED")
 frame:RegisterEvent("BANKFRAME_CLOSED")
 frame:RegisterEvent("CHALLENGE_MODE_COMPLETED")
+frame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
+frame:RegisterEvent("UNIT_INVENTORY_CHANGED")
+frame:RegisterEvent("TRAIT_CONFIG_LIST_UPDATED")
+frame:RegisterEvent("TRAIT_CONFIG_UPDATED")
+frame:RegisterEvent("ACTIVE_COMBAT_CONFIG_CHANGED")
+frame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+frame:RegisterEvent("TRAIT_SUB_TREE_CHANGED")
 
 GetCharacterKey = function()
     local character = UnitName("player")
@@ -528,31 +560,43 @@ local function GetCurrencyData(prev, preserveSparkSnapshot)
     for _, currencyDef in ipairs(CURRENCIES) do
         local info = C_CurrencyInfo.GetCurrencyInfo(currencyDef.id)
         if info then
-            local isComplete = false
-            if currencyDef.key == "nebulousVoidcore" and info.maxQuantity and info.maxQuantity > 0 then
-                isComplete = (info.totalEarned or info.quantity or 0) >= info.maxQuantity
-            end
-
             local quantityInfo = info
             if currencyDef.quantityId then
                 quantityInfo = C_CurrencyInfo.GetCurrencyInfo(currencyDef.quantityId) or info
             end
 
+            local quantity = quantityInfo.quantity or 0
+            local maxQuantity = info.maxQuantity or 0
+            local maxWeeklyQuantity = info.maxWeeklyQuantity or 0
+            local totalEarned = info.totalEarned or 0
+            local quantityEarnedThisWeek = info.quantityEarnedThisWeek or 0
+            local useTotalEarnedForMaxQty = info.useTotalEarnedForMaxQty == true
+            local isWeeklyMaxed = maxWeeklyQuantity > 0 and quantityEarnedThisWeek >= maxWeeklyQuantity
+            local isSeasonMaxed = useTotalEarnedForMaxQty and maxQuantity > 0 and totalEarned >= maxQuantity
+            local isTotalMaxed = not useTotalEarnedForMaxQty and maxQuantity > 0 and quantity >= maxQuantity
+            local isMaxed = isWeeklyMaxed or isSeasonMaxed or isTotalMaxed
+
             result[currencyDef.key] = {
                 id = currencyDef.id,
                 name = info.name,
-                quantity = quantityInfo.quantity or 0,
-                maxQuantity = info.maxQuantity or 0,
-                maxWeeklyQuantity = info.maxWeeklyQuantity or 0,
-                totalEarned = info.totalEarned or 0,
+                quantity = quantity,
+                maxQuantity = maxQuantity,
+                maxWeeklyQuantity = maxWeeklyQuantity,
+                totalEarned = totalEarned,
                 trackedQuantity = info.trackedQuantity or 0,
-                quantityEarnedThisWeek = info.quantityEarnedThisWeek or 0,
+                quantityEarnedThisWeek = quantityEarnedThisWeek,
+                useTotalEarnedForMaxQty = useTotalEarnedForMaxQty,
+                canEarnPerWeek = info.canEarnPerWeek == true,
                 discovered = info.discovered == true,
                 quality = info.quality,
                 iconFileID = info.iconFileID,
                 iconPath = GetTexturePath(info.iconFileID),
-                isWeeklyComplete = isComplete,
-                displayColor = isComplete and "red" or nil,
+                isWeeklyMaxed = isWeeklyMaxed,
+                isSeasonMaxed = isSeasonMaxed,
+                isTotalMaxed = isTotalMaxed,
+                isMaxed = isMaxed,
+                isWeeklyComplete = isMaxed,
+                displayColor = isMaxed and "red" or nil,
             }
         end
     end
@@ -620,7 +664,427 @@ local function GetCurrencyData(prev, preserveSparkSnapshot)
     return result
 end
 
-local function GetVaultData()
+local function SplitItemPayload(itemLink)
+    if type(itemLink) ~= "string" then return nil end
+    local payload = itemLink:match("|Hitem:([^|]+)|h") or itemLink:match("item:([^|]+)")
+    if not payload then return nil end
+
+    local fields = {}
+    for value in (payload .. ":"):gmatch("(.-):") do
+        table.insert(fields, value)
+    end
+    return fields
+end
+
+local function PositiveInteger(value)
+    local number = tonumber(value)
+    if not number or number <= 0 or number ~= math.floor(number) then return nil end
+    return number
+end
+
+local function ParseItemVariant(itemLink)
+    local fields = SplitItemPayload(itemLink)
+    if not fields then return nil end
+
+    local bonusIds = {}
+    local numBonusIds = tonumber(fields[13]) or 0
+    if numBonusIds < 0 or numBonusIds > 64 then numBonusIds = 0 end
+    for index = 1, numBonusIds do
+        local bonusId = PositiveInteger(fields[13 + index])
+        if bonusId then table.insert(bonusIds, bonusId) end
+    end
+
+    return {
+        itemId = PositiveInteger(fields[1]),
+        enchantId = PositiveInteger(fields[2]),
+        suffixId = tonumber(fields[7]),
+        itemContext = tonumber(fields[12]),
+        bonusIds = bonusIds,
+    }
+end
+
+local function GetAtlasFileID(atlas)
+    if type(atlas) ~= "string" or not C_Texture or type(C_Texture.GetAtlasInfo) ~= "function" then return nil end
+    local atlasOK, atlasInfo = pcall(C_Texture.GetAtlasInfo, atlas)
+    return atlasOK and type(atlasInfo) == "table" and PositiveInteger(atlasInfo.file) or nil
+end
+
+local function GetInventoryEnchantData(slotId)
+    if not C_TooltipInfo or type(C_TooltipInfo.GetInventoryItem) ~= "function" then return nil end
+    local tooltipOK, tooltip = pcall(C_TooltipInfo.GetInventoryItem, "player", slotId)
+    if not tooltipOK or type(tooltip) ~= "table" or type(tooltip.lines) ~= "table" then return nil end
+    local prefix = type(ENCHANTED_TOOLTIP_LINE) == "string" and ENCHANTED_TOOLTIP_LINE:match("^(.-)%%s") or nil
+    if not prefix then return nil end
+    for _, line in ipairs(tooltip.lines) do
+        local text = type(line) == "table" and line.leftText or nil
+        if text and issecretvalue and issecretvalue(text) then text = nil end
+        if type(text) == "string" and text:find(prefix, 1, true) == 1 then
+            text = text:sub(#prefix + 1)
+            local atlas = text:match("|A:([^:]+):")
+            local iconFileID = GetAtlasFileID(atlas)
+            text = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|A.-|a", "")
+            if text ~= "" then return { name = text, iconFileID = iconFileID } end
+        end
+    end
+    return nil
+end
+
+local function GetEquipmentData(prev)
+    if type(GetInventoryItemLink) ~= "function" or not C_Item or type(C_Item.GetItemInfo) ~= "function" then
+        return prev and prev.equipment or nil
+    end
+
+    local items = {}
+    local setCounts = {}
+    for _, slot in ipairs(EQUIPMENT_SLOTS) do
+        local linkOK, itemLink = pcall(GetInventoryItemLink, "player", slot.id)
+        if linkOK and type(itemLink) == "string" and itemLink ~= "" then
+            local variant = ParseItemVariant(itemLink)
+            local infoOK, itemName, _, quality, itemLevel, _, _, _, _, _, iconFileID, _, _, _, _, _, setId =
+                pcall(C_Item.GetItemInfo, itemLink)
+            if infoOK and variant and variant.itemId then
+                if type(C_Item.GetDetailedItemLevelInfo) == "function" then
+                    local levelOK, detailedLevel = pcall(C_Item.GetDetailedItemLevelInfo, itemLink)
+                    if levelOK and type(detailedLevel) == "number" then itemLevel = detailedLevel end
+                end
+
+                local gems = {}
+                if type(C_Item.GetItemGem) == "function" then
+                    for gemIndex = 1, 4 do
+                        local gemOK, gemName, gemLink = pcall(C_Item.GetItemGem, itemLink, gemIndex)
+                        if gemOK and type(gemLink) == "string" and gemLink ~= "" then
+                            local gemVariant = ParseItemVariant(gemLink)
+                            if gemVariant and gemVariant.itemId then
+                                local gemIcon = nil
+                                if type(C_Item.GetItemIconByID) == "function" then
+                                    local iconOK, resolvedIcon = pcall(C_Item.GetItemIconByID, gemLink)
+                                    if iconOK then gemIcon = resolvedIcon end
+                                end
+                                table.insert(gems, {
+                                    itemId = gemVariant.itemId,
+                                    itemLink = gemLink,
+                                    name = gemName,
+                                    iconFileID = gemIcon,
+                                    iconPath = GetTexturePath(gemIcon),
+                                })
+                            end
+                        end
+                    end
+                end
+
+                local enchant = nil
+                if variant.enchantId then
+                    local enchantData = GetInventoryEnchantData(slot.id) or {}
+                    enchant = {
+                        enchantId = variant.enchantId,
+                        name = enchantData.name,
+                        iconFileID = enchantData.iconFileID,
+                        iconPath = GetTexturePath(enchantData.iconFileID),
+                    }
+                end
+                local upgrade = nil
+                if type(C_Item.GetItemUpgradeInfo) == "function" then
+                    local upgradeOK, upgradeInfo = pcall(C_Item.GetItemUpgradeInfo, itemLink)
+                    if upgradeOK and type(upgradeInfo) == "table" then
+                        upgrade = {
+                            track = upgradeInfo.trackString,
+                            currentLevel = upgradeInfo.currentLevel,
+                            maxLevel = upgradeInfo.maxLevel,
+                        }
+                    end
+                end
+
+                table.insert(items, {
+                    slotId = slot.id,
+                    slotName = slot.name,
+                    itemId = variant.itemId,
+                    itemName = itemName,
+                    itemLink = itemLink,
+                    quality = quality,
+                    itemLevel = itemLevel,
+                    iconFileID = iconFileID,
+                    iconPath = GetTexturePath(iconFileID),
+                    setId = setId,
+                    enchant = enchant,
+                    gems = gems,
+                    bonusIds = variant.bonusIds,
+                    itemContext = variant.itemContext,
+                    suffixId = variant.suffixId,
+                    upgrade = upgrade,
+                })
+
+                if type(setId) == "number" and setId > 0 then
+                    setCounts[setId] = (setCounts[setId] or 0) + 1
+                end
+            end
+        end
+    end
+
+    if #items == 0 and prev and prev.equipment and type(prev.equipment.items) == "table" and #prev.equipment.items > 0 then
+        return prev.equipment
+    end
+
+    local setPieces = {}
+    for setId, count in pairs(setCounts) do
+        table.insert(setPieces, { setId = setId, count = count })
+    end
+    table.sort(setPieces, function(left, right) return left.setId < right.setId end)
+    return { averageItemLevel = GetAverageItemLevel(), setPieces = setPieces, items = items }
+end
+
+local function CurrentSpecialization()
+    if not C_SpecializationInfo or type(C_SpecializationInfo.GetSpecialization) ~= "function"
+        or type(C_SpecializationInfo.GetSpecializationInfo) ~= "function" then
+        return nil, nil
+    end
+    local index = C_SpecializationInfo.GetSpecialization()
+    if not index then return nil, nil end
+    local specId, specName, _, specIconFileID = C_SpecializationInfo.GetSpecializationInfo(index)
+    return specId, specName, PositiveInteger(specIconFileID)
+end
+
+local function SerializeTalentEntry(configId, nodeInfo, entryId)
+    local entryInfo = C_Traits.GetEntryInfo(configId, entryId)
+    if type(entryInfo) ~= "table" then return nil end
+    local definition = entryInfo.definitionID and C_Traits.GetDefinitionInfo(entryInfo.definitionID) or nil
+    local spellId = definition and definition.spellID or nil
+    local spellInfo = spellId and C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellId) or nil
+    local selected = nodeInfo.activeEntry and nodeInfo.activeEntry.entryID == entryId or false
+    local rank = selected and (nodeInfo.activeEntry.rank or nodeInfo.ranksPurchased or 0) or 0
+    local description = definition and definition.overrideDescription or nil
+    if not description and C_Traits.GetTraitDescription then
+        local descriptionOK, value = pcall(C_Traits.GetTraitDescription, entryId, math.max(1, rank))
+        if descriptionOK and type(value) == "string" and value ~= "" then description = value end
+    end
+    if not description and spellId and C_Spell and C_Spell.GetSpellDescription then
+        local descriptionOK, value = pcall(C_Spell.GetSpellDescription, spellId)
+        if descriptionOK then description = value end
+    end
+
+    return {
+        entryId = entryId,
+        definitionId = entryInfo.definitionID,
+        spellId = spellId,
+        overriddenSpellId = definition and definition.overriddenSpellID or nil,
+        name = definition and definition.overrideName or (spellInfo and spellInfo.name or nil),
+        description = description,
+        subtext = definition and definition.overrideSubtext or nil,
+        iconFileID = definition and definition.overrideIcon or (spellInfo and spellInfo.iconID or nil),
+        iconPath = GetTexturePath(definition and definition.overrideIcon or (spellInfo and spellInfo.iconID or nil)),
+        selected = selected,
+        rank = rank,
+        maxRanks = entryInfo.maxRanks,
+        entryType = entryInfo.type,
+        subTreeId = entryInfo.subTreeID,
+    }
+end
+
+local function SerializeTalentNode(configId, nodeId)
+    local nodeInfo = C_Traits.GetNodeInfo(configId, nodeId)
+    if type(nodeInfo) ~= "table" or nodeInfo.isVisible == false or not PositiveInteger(nodeInfo.ID or nodeId) then return nil end
+    local entries = {}
+    for _, entryId in ipairs(nodeInfo.entryIDs or {}) do
+        local entry = SerializeTalentEntry(configId, nodeInfo, entryId)
+        if entry then table.insert(entries, entry) end
+    end
+    local edges = {}
+    for _, edge in ipairs(nodeInfo.visibleEdges or {}) do
+        if PositiveInteger(edge.targetNode) then
+            table.insert(edges, {
+                targetNodeId = edge.targetNode,
+                type = edge.type,
+                visualStyle = edge.visualStyle,
+                active = edge.isActive == true,
+            })
+        end
+    end
+    local activeRank = nodeInfo.activeEntry and tonumber(nodeInfo.activeEntry.rank) or 0
+    local ranksPurchased = math.max(tonumber(nodeInfo.ranksPurchased) or 0, activeRank or 0)
+    return {
+        nodeId = nodeInfo.ID or nodeId,
+        posX = nodeInfo.posX,
+        posY = nodeInfo.posY,
+        nodeType = nodeInfo.type,
+        ranksPurchased = ranksPurchased,
+        maxRanks = nodeInfo.maxRanks or 0,
+        activeEntryId = nodeInfo.activeEntry and nodeInfo.activeEntry.entryID or nil,
+        entries = entries,
+        visibleEdges = edges,
+        subTreeId = nodeInfo.subTreeID,
+        subTreeActive = nodeInfo.subTreeActive == true,
+    }
+end
+
+local function FirstNodeCurrency(configId, nodeId)
+    if type(C_Traits.GetNodeCost) ~= "function" then return nil end
+    local costs = C_Traits.GetNodeCost(configId, nodeId)
+    return type(costs) == "table" and costs[1] and (costs[1].ID or costs[1].traitCurrencyID) or nil
+end
+
+local function CollectCombatTalentSnapshot(prev)
+    if not C_ClassTalents or type(C_ClassTalents.GetActiveConfigID) ~= "function" or not C_Traits then
+        return prev and prev.talents or nil
+    end
+    local configId = C_ClassTalents.GetActiveConfigID()
+    local configInfo = configId and C_Traits.GetConfigInfo(configId) or nil
+    if not configId or type(configInfo) ~= "table" or type(configInfo.treeIDs) ~= "table" then
+        return prev and prev.talents or nil
+    end
+
+    local specId, specName, specIconFileID = CurrentSpecialization()
+    local className = type(UnitClass) == "function" and UnitClass("player") or nil
+    local trees = {}
+    local capturedNodes = 0
+    for _, treeId in ipairs(configInfo.treeIDs) do
+        local currencies = C_Traits.GetTreeCurrencyInfo and C_Traits.GetTreeCurrencyInfo(configId, treeId, true) or {}
+        local classCurrencyId = currencies and currencies[1] and currencies[1].traitCurrencyID or nil
+        local specCurrencyId = currencies and currencies[2] and currencies[2].traitCurrencyID or nil
+        local buckets = {
+            class = { treeId = treeId, type = "class", name = className, nodes = {} },
+            spec = { treeId = treeId, type = "spec", name = specName, nodes = {} },
+        }
+        local heroBuckets = {}
+        for _, nodeId in ipairs(C_Traits.GetTreeNodes(treeId) or {}) do
+            local node = SerializeTalentNode(configId, nodeId)
+            if node then
+                local bucket = nil
+                if node.subTreeId then
+                    bucket = heroBuckets[node.subTreeId]
+                    if not bucket then
+                        local subTreeInfo = C_Traits.GetSubTreeInfo and C_Traits.GetSubTreeInfo(configId, node.subTreeId) or nil
+                        local iconAtlas = subTreeInfo and subTreeInfo.iconElementID or nil
+                        local heroIconFileID = GetAtlasFileID(iconAtlas)
+                        bucket = {
+                            treeId = treeId,
+                            subTreeId = node.subTreeId,
+                            type = "hero",
+                            name = subTreeInfo and subTreeInfo.name or nil,
+                            description = subTreeInfo and subTreeInfo.description or nil,
+                            iconAtlas = iconAtlas,
+                            iconFileID = heroIconFileID,
+                            iconPath = GetTexturePath(heroIconFileID),
+                            active = subTreeInfo and subTreeInfo.isActive == true or node.subTreeActive,
+                            nodes = {},
+                        }
+                        heroBuckets[node.subTreeId] = bucket
+                    end
+                else
+                    local currencyId = FirstNodeCurrency(configId, nodeId)
+                    if currencyId and currencyId == classCurrencyId then bucket = buckets.class end
+                    if currencyId and currencyId == specCurrencyId then bucket = buckets.spec end
+                end
+                if bucket then
+                    table.insert(bucket.nodes, node)
+                    capturedNodes = capturedNodes + 1
+                end
+            end
+        end
+        if #buckets.class.nodes > 0 then table.insert(trees, buckets.class) end
+        local orderedHeroBuckets = {}
+        for _, heroBucket in pairs(heroBuckets) do
+            if #heroBucket.nodes > 0 then table.insert(orderedHeroBuckets, heroBucket) end
+        end
+        table.sort(orderedHeroBuckets, function(left, right)
+            if left.active ~= right.active then return left.active == true end
+            return (left.subTreeId or 0) < (right.subTreeId or 0)
+        end)
+        for _, heroBucket in ipairs(orderedHeroBuckets) do table.insert(trees, heroBucket) end
+        if #buckets.spec.nodes > 0 then table.insert(trees, buckets.spec) end
+    end
+
+    if capturedNodes == 0 then return prev and prev.talents or nil end
+    local importString = C_Traits.GenerateImportString and C_Traits.GenerateImportString(configId) or nil
+    return {
+        configId = configId,
+        loadoutName = configInfo.name,
+        importString = importString ~= "" and importString or nil,
+        specId = specId,
+        specName = specName,
+        specIconFileID = specIconFileID,
+        specIconPath = GetTexturePath(specIconFileID),
+        class = className,
+        className = className,
+        characterLevel = UnitLevel("player"),
+        trees = trees,
+    }
+end
+
+local function CollectOmniumSnapshot(prev)
+    if not C_Traits or type(C_Traits.GetConfigIDBySystemID) ~= "function" then
+        return prev and prev.omniumFolio or nil
+    end
+    local configId = C_Traits.GetConfigIDBySystemID(OMNIUM_TRAIT_SYSTEM_ID)
+    local configInfo = configId and C_Traits.GetConfigInfo(configId) or nil
+    if not configId or type(configInfo) ~= "table" then return prev and prev.omniumFolio or nil end
+    local treeIds = type(configInfo.treeIDs) == "table" and configInfo.treeIDs or {}
+    if #treeIds == 0 and C_Traits.GetTreeNodes(OMNIUM_FALLBACK_TREE_ID) then treeIds = { OMNIUM_FALLBACK_TREE_ID } end
+
+    local trees = {}
+    local capturedNodes = 0
+    for _, treeId in ipairs(treeIds) do
+        local tree = { treeId = treeId, type = "omnium", name = configInfo.name, nodes = {} }
+        for _, nodeId in ipairs(C_Traits.GetTreeNodes(treeId) or {}) do
+            local node = SerializeTalentNode(configId, nodeId)
+            if node then table.insert(tree.nodes, node); capturedNodes = capturedNodes + 1 end
+        end
+        if #tree.nodes > 0 then table.insert(trees, tree) end
+    end
+    if capturedNodes == 0 then return prev and prev.omniumFolio or nil end
+    return { systemId = OMNIUM_TRAIT_SYSTEM_ID, configId = configId, treeIds = treeIds, trees = trees }
+end
+
+local function HasArrayValues(value)
+    return type(value) == "table" and next(value) ~= nil
+end
+
+local function FindVaultSlot(slots, target)
+    for _, slot in ipairs(slots or {}) do
+        if (target.index ~= nil and slot.index == target.index)
+            or (target.threshold ~= nil and slot.threshold == target.threshold) then
+            return slot
+        end
+    end
+    return nil
+end
+
+local function PreserveVaultDetails(result, previous)
+    if type(previous) ~= "table" or previous.weekKey ~= result.weekKey then return result end
+
+    for _, bucketName in ipairs({ "raid", "dungeons", "world" }) do
+        local currentBucket = result[bucketName]
+        local previousBucket = previous[bucketName]
+        if type(currentBucket) == "table" and type(previousBucket) == "table"
+            and not HasArrayValues(currentBucket.slots) and HasArrayValues(previousBucket.slots) then
+            result[bucketName] = previousBucket
+        end
+    end
+
+    if type(result.raid) == "table" and type(previous.raid) == "table" then
+        for _, slot in ipairs(result.raid.slots or {}) do
+            if not HasArrayValues(slot.encounters) then
+                local previousSlot = FindVaultSlot(previous.raid.slots, slot)
+                if previousSlot and HasArrayValues(previousSlot.encounters) then
+                    slot.encounters = previousSlot.encounters
+                end
+            end
+        end
+    end
+
+    if type(result.dungeons) == "table" and type(previous.dungeons) == "table"
+        and not HasArrayValues(result.dungeons.topRuns) and HasArrayValues(previous.dungeons.topRuns) then
+        result.dungeons.topRuns = previous.dungeons.topRuns
+    end
+
+    if type(result.world) == "table" and type(previous.world) == "table"
+        and not HasArrayValues(result.world.tierProgress) and HasArrayValues(previous.world.tierProgress) then
+        result.world.tierProgress = previous.world.tierProgress
+    end
+
+    return result
+end
+
+local function GetVaultData(prev, reason)
+    local previousVault = prev and prev.vault or nil
     local result = {
         weekKey = GetWeeklyResetKey(),
         hasAvailableRewards = C_WeeklyRewards.HasAvailableRewards() == true,
@@ -629,6 +1093,12 @@ local function GetVaultData()
         world = { unlocked = 0, slots = {} },
     }
 
+    -- WoW tears these APIs down before PLAYER_LOGOUT. Gameplay changes have
+    -- already emitted their own events, so retain the last complete snapshot.
+    if reason == "PLAYER_LOGOUT" and previousVault and previousVault.weekKey == result.weekKey then
+        return previousVault
+    end
+
     local typeMap = {
         [Enum.WeeklyRewardChestThresholdType.Raid] = "raid",
         [Enum.WeeklyRewardChestThresholdType.Activities] = "dungeons",
@@ -636,7 +1106,7 @@ local function GetVaultData()
     }
 
     local activities = C_WeeklyRewards.GetActivities()
-    if not activities then return result end
+    if not activities then return PreserveVaultDetails(result, previousVault) end
 
     for _, activity in ipairs(activities) do
         local bucketName = typeMap[activity.type]
@@ -653,6 +1123,33 @@ local function GetVaultData()
                 unlocked = unlocked == true,
             }
 
+            if bucketName == "raid" and type(C_WeeklyRewards.GetActivityEncounterInfo) == "function" then
+                local encountersOK, encounters = pcall(C_WeeklyRewards.GetActivityEncounterInfo, activity.type, activity.index)
+                if encountersOK and type(encounters) == "table" then
+                    slot.encounters = {}
+                    for _, encounter in ipairs(encounters) do
+                        local encounterName = nil
+                        local instanceName = nil
+                        if type(EJ_GetEncounterInfo) == "function" then
+                            local encounterOK, name = pcall(EJ_GetEncounterInfo, encounter.encounterID)
+                            if encounterOK then encounterName = name end
+                        end
+                        if type(EJ_GetInstanceInfo) == "function" then
+                            local instanceOK, name = pcall(EJ_GetInstanceInfo, encounter.instanceID)
+                            if instanceOK then instanceName = name end
+                        end
+                        table.insert(slot.encounters, {
+                            encounterID = encounter.encounterID,
+                            bestDifficulty = encounter.bestDifficulty or 0,
+                            uiOrder = encounter.uiOrder,
+                            instanceID = encounter.instanceID,
+                            name = encounterName,
+                            instanceName = instanceName,
+                        })
+                    end
+                end
+            end
+
             table.insert(result[bucketName].slots, slot)
             if unlocked then
                 result[bucketName].unlocked = result[bucketName].unlocked + 1
@@ -667,7 +1164,50 @@ local function GetVaultData()
         mythicPlus = mythicPlus or 0,
     }
 
-    return result
+    result.dungeons.topRuns = {}
+    if C_MythicPlus and type(C_MythicPlus.GetRunHistory) == "function" then
+        local historyOK, runHistory = pcall(C_MythicPlus.GetRunHistory, false, true)
+        if historyOK and type(runHistory) == "table" then
+            table.sort(runHistory, function(left, right)
+                if (left.level or 0) == (right.level or 0) then
+                    return (left.mapChallengeModeID or 0) < (right.mapChallengeModeID or 0)
+                end
+                return (left.level or 0) > (right.level or 0)
+            end)
+            for _, run in ipairs(runHistory) do
+                local mapName = nil
+                if C_ChallengeMode and type(C_ChallengeMode.GetMapUIInfo) == "function" then
+                    local mapOK, name = pcall(C_ChallengeMode.GetMapUIInfo, run.mapChallengeModeID)
+                    if mapOK then mapName = name end
+                end
+                table.insert(result.dungeons.topRuns, {
+                    level = run.level or 0,
+                    mapChallengeModeID = run.mapChallengeModeID,
+                    name = mapName,
+                })
+            end
+        end
+    end
+
+    result.world.tierProgress = {}
+    if type(C_WeeklyRewards.GetSortedProgressForActivity) == "function" then
+        local progressOK, tierProgress = pcall(
+            C_WeeklyRewards.GetSortedProgressForActivity,
+            Enum.WeeklyRewardChestThresholdType.World,
+            true
+        )
+        if progressOK and type(tierProgress) == "table" then
+            for _, progress in ipairs(tierProgress) do
+                table.insert(result.world.tierProgress, {
+                    activityTierID = progress.activityTierID,
+                    difficulty = progress.difficulty or 0,
+                    numPoints = progress.numPoints or 0,
+                })
+            end
+        end
+    end
+
+    return PreserveVaultDetails(result, previousVault)
 end
 
 local function GetTimedUpgradeLevel(durationSec, timeLimit)
@@ -911,6 +1451,12 @@ local function GetMoneyData(prev, reason)
     }
 end
 
+local function CaptureSnapshotSafely(collector, prev, field)
+    local ok, snapshot = pcall(collector, prev)
+    if ok and snapshot ~= nil then return snapshot end
+    return prev and prev[field] or nil
+end
+
 local function SaveCharacterData(reason, updateSeason, refreshKeystoneLoot)
     KeystoneSyncDB = KeystoneSyncDB or {}
     EnsureSavedVariablesInstanceId()
@@ -935,10 +1481,23 @@ local function SaveCharacterData(reason, updateSeason, refreshKeystoneLoot)
     KeystoneSyncDB[key].keystoneMapId = keystone.mapId
     KeystoneSyncDB[key].keystoneDungeon = keystone.dungeonName
     KeystoneSyncDB[key].keystoneWeeklyResetKey = keystone.weeklyResetKey
-    KeystoneSyncDB[key].vault = GetVaultData()
+    KeystoneSyncDB[key].vault = GetVaultData(prev, reason)
     KeystoneSyncDB[key].preyHunts = GetPreyHunts(prev)
     KeystoneSyncDB[key].currencies = GetCurrencyData(prev, reason == "PLAYER_LOGOUT")
     KeystoneSyncDB[key].money = GetMoneyData(prev, reason)
+    local shouldCaptureSnapshots = reason ~= "PLAYER_LOGOUT" and (
+        reason == "PLAYER_LOGIN"
+            or reason == "MANUAL_COMMAND"
+            or reason == "SNAPSHOT_REFRESH"
+            or not (prev and prev.equipment)
+            or not (prev and prev.talents)
+            or not (prev and prev.omniumFolio)
+    )
+    if shouldCaptureSnapshots then
+        KeystoneSyncDB[key].equipment = CaptureSnapshotSafely(GetEquipmentData, prev, "equipment")
+        KeystoneSyncDB[key].talents = CaptureSnapshotSafely(CollectCombatTalentSnapshot, prev, "talents")
+        KeystoneSyncDB[key].omniumFolio = CaptureSnapshotSafely(CollectOmniumSnapshot, prev, "omniumFolio")
+    end
     if updateSeason then
         UpdateMythicPlusSeason(key, prev)
     end
@@ -949,6 +1508,15 @@ local function SaveCharacterData(reason, updateSeason, refreshKeystoneLoot)
         return RefreshKeystoneLoot()
     end
     return nil
+end
+
+local function ScheduleSnapshotRefresh()
+    if snapshotRefreshPending or not C_Timer or type(C_Timer.After) ~= "function" then return end
+    snapshotRefreshPending = true
+    C_Timer.After(SNAPSHOT_REFRESH_DELAY_SECONDS, function()
+        snapshotRefreshPending = false
+        SaveCharacterData("SNAPSHOT_REFRESH", false, false)
+    end)
 end
 
 local function PrintCurrentKeystone()
@@ -980,7 +1548,7 @@ local function ScheduleSeasonCapture()
     end)
 end
 
-frame:SetScript("OnEvent", function(self, event)
+frame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_LOGIN" then
         personalBankAccessible = false
         SaveCharacterData(event, false, false)
@@ -999,6 +1567,14 @@ frame:SetScript("OnEvent", function(self, event)
         SaveCharacterData(event, false)
     elseif event == "CHALLENGE_MODE_COMPLETED" or event == "MYTHIC_PLUS_NEW_WEEKLY_RECORD" then
         SaveCharacterData(event, true)
+    elseif event == "PLAYER_EQUIPMENT_CHANGED"
+        or (event == "UNIT_INVENTORY_CHANGED" and (...) == "player")
+        or event == "TRAIT_CONFIG_LIST_UPDATED"
+        or event == "TRAIT_CONFIG_UPDATED"
+        or event == "ACTIVE_COMBAT_CONFIG_CHANGED"
+        or event == "PLAYER_SPECIALIZATION_CHANGED"
+        or event == "TRAIT_SUB_TREE_CHANGED" then
+        ScheduleSnapshotRefresh()
     else
         SaveCharacterData(event, false)
     end

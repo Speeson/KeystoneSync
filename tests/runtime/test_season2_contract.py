@@ -30,27 +30,34 @@ def simulate_currency(defn: dict, display_info: dict, quantity_info: dict) -> di
     quantity_info is the C_CurrencyInfo result for `quantityId` (e.g. 3418),
     or display_info when no quantityId exists.
     """
-    is_complete = False
-    if defn["key"] == "nebulousVoidcore" and display_info.get("maxQuantity", 0) > 0:
-        is_complete = (
-            display_info.get("totalEarned") or display_info.get("quantity") or 0
-        ) >= display_info["maxQuantity"]
-
     source = quantity_info if defn["quantityId"] is not None else display_info
+
+    quantity = source.get("quantity") or 0
+    maximum = display_info.get("maxQuantity") or 0
+    weekly_maximum = display_info.get("maxWeeklyQuantity") or 0
+    weekly = display_info.get("quantityEarnedThisWeek") or 0
+    total_earned = display_info.get("totalEarned") or 0
+    use_total = display_info.get("useTotalEarnedForMaxQty") is True
+    weekly_maxed = weekly_maximum > 0 and weekly >= weekly_maximum
+    season_maxed = use_total and maximum > 0 and total_earned >= maximum
+    total_maxed = not use_total and maximum > 0 and quantity >= maximum
 
     return {
         "id": defn["id"],
         "name": display_info["name"],
-        "quantity": source.get("quantity") or 0,
-        "maxQuantity": display_info.get("maxQuantity") or 0,
-        "maxWeeklyQuantity": display_info.get("maxWeeklyQuantity") or 0,
-        "totalEarned": display_info.get("totalEarned") or 0,
+        "quantity": quantity,
+        "maxQuantity": maximum,
+        "maxWeeklyQuantity": weekly_maximum,
+        "totalEarned": total_earned,
         "trackedQuantity": display_info.get("trackedQuantity") or 0,
         "quantityEarnedThisWeek": display_info.get("quantityEarnedThisWeek") or 0,
         "discovered": display_info.get("discovered") is True,
         "quality": display_info.get("quality"),
         "iconFileID": display_info.get("iconFileID"),
-        "isWeeklyComplete": is_complete,
+        "isWeeklyMaxed": weekly_maxed,
+        "isSeasonMaxed": season_maxed,
+        "isTotalMaxed": total_maxed,
+        "isMaxed": weekly_maxed or season_maxed or total_maxed,
     }
 
 
@@ -68,6 +75,7 @@ class Season2ContractTests(unittest.TestCase):
             "tidalSparkDust": {"id": 3509, "quantityId": None},
             "cofferKeyShards": {"id": 3310, "quantityId": None},
             "restoredCofferKey": {"id": 3028, "quantityId": None},
+            "untaintedManaCrystals": {"id": 3356, "quantityId": None},
             "nebulousVoidcore": {"id": 3513, "quantityId": 3418},
         }
         actual = {
@@ -123,7 +131,7 @@ class Season2ContractTests(unittest.TestCase):
     def test_3418_is_used_only_as_quantity_source(self):
         self.assertRegex(LUA, r"quantityId = 3418")
         self.assertRegex(LUA, r"currencyDef\.quantityId")
-        self.assertRegex(LUA, r"quantity = quantityInfo\.quantity or 0,")
+        self.assertRegex(LUA, r"local quantity = quantityInfo\.quantity or 0")
         self.assertRegex(LUA, r"iconFileID = info\.iconFileID,")
         self.assertRegex(LUA, r"iconPath = GetTexturePath\(info\.iconFileID\),")
         self.assertRegex(LUA, r"id = currencyDef\.id,")
@@ -179,6 +187,39 @@ class Season2ContractTests(unittest.TestCase):
         self.assertEqual(result["id"], 3446)
         self.assertEqual(result["quantity"], 9)
         self.assertEqual(result["iconFileID"], 111)
+
+    def test_weekly_cap_is_maxed_even_when_owned_quantity_is_zero(self):
+        result = simulate_currency(
+            parse_currency_defs(LUA)["cofferKeyShards"],
+            {
+                "name": "Coffer Key Shards",
+                "quantity": 0,
+                "maxQuantity": 0,
+                "maxWeeklyQuantity": 600,
+                "quantityEarnedThisWeek": 600,
+            },
+            {},
+        )
+        self.assertTrue(result["isWeeklyMaxed"])
+        self.assertTrue(result["isMaxed"])
+
+    def test_untainted_weekly_cap_does_not_mark_total_cap(self):
+        result = simulate_currency(
+            parse_currency_defs(LUA)["untaintedManaCrystals"],
+            {
+                "name": "Untainted Mana-Crystals",
+                "quantity": 143,
+                "maxQuantity": 1000,
+                "maxWeeklyQuantity": 250,
+                "quantityEarnedThisWeek": 250,
+                "useTotalEarnedForMaxQty": False,
+            },
+            {},
+        )
+        self.assertTrue(result["isWeeklyMaxed"])
+        self.assertFalse(result["isSeasonMaxed"])
+        self.assertFalse(result["isTotalMaxed"])
+        self.assertTrue(result["isMaxed"])
 
 
 if __name__ == "__main__":
