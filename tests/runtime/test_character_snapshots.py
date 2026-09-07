@@ -154,6 +154,46 @@ class CharacterSnapshotTests(unittest.TestCase):
     def record(self, harness):
         return lua_to_python(harness.globals.KeystoneSyncDB[CHARACTER_KEY])
 
+    def test_currency_total_tooltip_supplies_dynamic_season_cap(self):
+        harness = self.make_runtime()
+        harness.execute(
+            r'''
+            C_CurrencyInfo.GetCurrencyInfo = function(currencyID)
+                if currencyID ~= 3509 then return nil end
+                return {
+                    name = "Tidal Spark Dust",
+                    quantity = 6,
+                    maxQuantity = 0,
+                    maxWeeklyQuantity = 0,
+                    totalEarned = 6,
+                    quantityEarnedThisWeek = 0,
+                    useTotalEarnedForMaxQty = true,
+                    canEarnPerWeek = false,
+                    discovered = true,
+                    quality = 4,
+                    iconFileID = 5929576,
+                }
+            end
+            C_TooltipInfo.GetCurrencyByID = function(currencyID)
+                if currencyID ~= 3509 then return nil end
+                return { lines = {
+                    { type = 0, leftText = "Earn 1 each week" },
+                    { type = 14, leftText = "Current Season Maximum", rightText = "6 / 6" },
+                } }
+            end
+            '''
+        )
+
+        self.fire(harness, "PLAYER_LOGIN")
+        currency = self.record(harness)["currencies"]["tidalSparkDust"]
+
+        self.assertEqual(currency["maxWeeklyQuantity"], 0)
+        self.assertEqual(currency["maxQuantity"], 6)
+        self.assertEqual(currency["totalEarned"], 6)
+        self.assertTrue(currency["useTotalEarnedForMaxQty"])
+        self.assertTrue(currency["isSeasonMaxed"])
+        self.assertTrue(currency["isMaxed"])
+
     def test_equipment_preserves_real_variant_and_gems(self):
         harness = self.make_runtime()
         self.fire(harness, "PLAYER_LOGIN")

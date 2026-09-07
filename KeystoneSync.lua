@@ -554,6 +554,32 @@ local function GetSparkQuantities(prev, bankDataAuthoritative, preservePreviousS
     }
 end
 
+local function ParseTooltipMaximum(text)
+    if type(text) ~= "string" or (issecretvalue and issecretvalue(text)) then return nil end
+    text = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+    local maximum
+    for digits in text:gmatch("%d[%d%.,%s]*") do
+        local normalized = digits:gsub("[^%d]", "")
+        local value = tonumber(normalized)
+        if value then maximum = value end
+    end
+    return maximum
+end
+
+local function GetCurrencyTooltipMaximum(currencyId)
+    if not C_TooltipInfo or type(C_TooltipInfo.GetCurrencyByID) ~= "function" then return nil end
+    local tooltipOK, tooltip = pcall(C_TooltipInfo.GetCurrencyByID, currencyId)
+    if not tooltipOK or type(tooltip) ~= "table" or type(tooltip.lines) ~= "table" then return nil end
+    local currencyTotalType = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.CurrencyTotal or 14
+    for _, line in ipairs(tooltip.lines) do
+        if type(line) == "table" and line.type == currencyTotalType then
+            local maximum = ParseTooltipMaximum(line.rightText) or ParseTooltipMaximum(line.leftText)
+            if maximum and maximum > 0 then return maximum end
+        end
+    end
+    return nil
+end
+
 local function GetCurrencyData(prev, preserveSparkSnapshot)
     local result = {}
 
@@ -571,6 +597,12 @@ local function GetCurrencyData(prev, preserveSparkSnapshot)
             local totalEarned = info.totalEarned or 0
             local quantityEarnedThisWeek = info.quantityEarnedThisWeek or 0
             local useTotalEarnedForMaxQty = info.useTotalEarnedForMaxQty == true
+            if useTotalEarnedForMaxQty and maxQuantity <= 0 then
+                local tooltipMaximum = GetCurrencyTooltipMaximum(currencyDef.id)
+                if tooltipMaximum and tooltipMaximum >= totalEarned then
+                    maxQuantity = tooltipMaximum
+                end
+            end
             local isWeeklyMaxed = maxWeeklyQuantity > 0 and quantityEarnedThisWeek >= maxWeeklyQuantity
             local isSeasonMaxed = useTotalEarnedForMaxQty and maxQuantity > 0 and totalEarned >= maxQuantity
             local isTotalMaxed = not useTotalEarnedForMaxQty and maxQuantity > 0 and quantity >= maxQuantity
