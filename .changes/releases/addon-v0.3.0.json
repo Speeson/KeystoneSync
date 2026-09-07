@@ -1,0 +1,12 @@
+{
+  "component": "addon",
+  "current_version": "0.2.8",
+  "version": "0.3.0",
+  "bump": "minor",
+  "tag": "v0.3.0",
+  "release_name": "KeystoneSync 0.3.0",
+  "asset": "KeystoneSync-v0.3.0.zip",
+  "changesets": [
+    "character-snapshots.json"
+  ]
+}
