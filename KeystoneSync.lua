@@ -156,6 +156,7 @@ frame:RegisterEvent("TRAIT_CONFIG_UPDATED")
 frame:RegisterEvent("ACTIVE_COMBAT_CONFIG_CHANGED")
 frame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
 frame:RegisterEvent("TRAIT_SUB_TREE_CHANGED")
+frame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 
 GetCharacterKey = function()
     local character = UnitName("player")
@@ -1089,6 +1090,22 @@ local function PreserveVaultDetails(result, previous)
             and not HasArrayValues(currentBucket.slots) and HasArrayValues(previousBucket.slots) then
             result[bucketName] = previousBucket
         end
+        currentBucket = result[bucketName]
+        if type(currentBucket) == "table" and type(previousBucket) == "table" then
+            for _, slot in ipairs(currentBucket.slots or {}) do
+                local previousSlot = FindVaultSlot(previousBucket.slots, slot)
+                if previousSlot then
+                    if not slot.rewardItemLevel and type(previousSlot.rewardItemLevel) == "number"
+                        and previousSlot.rewardItemLevel > 0 then
+                        slot.rewardItemLevel = previousSlot.rewardItemLevel
+                    end
+                    if not slot.rewardUpgradeTrack and type(previousSlot.rewardUpgradeTrack) == "string"
+                        and previousSlot.rewardUpgradeTrack ~= "" then
+                        slot.rewardUpgradeTrack = previousSlot.rewardUpgradeTrack
+                    end
+                end
+            end
+        end
     end
 
     if type(result.raid) == "table" and type(previous.raid) == "table" then
@@ -1154,6 +1171,32 @@ local function GetVaultData(prev, reason)
                 activityTierID = activity.activityTierID,
                 unlocked = unlocked == true,
             }
+
+            if unlocked and type(C_WeeklyRewards.GetExampleRewardItemHyperlinks) == "function" and C_Item then
+                local rewardOK, currentRewardLink = pcall(
+                    C_WeeklyRewards.GetExampleRewardItemHyperlinks,
+                    activity.id
+                )
+                if rewardOK and currentRewardLink then
+                    if type(C_Item.GetDetailedItemLevelInfo) == "function" then
+                        local itemLevelOK, rewardItemLevel = pcall(
+                            C_Item.GetDetailedItemLevelInfo,
+                            currentRewardLink
+                        )
+                        if itemLevelOK and type(rewardItemLevel) == "number" and rewardItemLevel > 0 then
+                            slot.rewardItemLevel = rewardItemLevel
+                        end
+                    end
+                    if type(C_Item.GetItemUpgradeInfo) == "function" then
+                        local upgradeOK, upgradeInfo = pcall(C_Item.GetItemUpgradeInfo, currentRewardLink)
+                        if upgradeOK and type(upgradeInfo) == "table"
+                            and type(upgradeInfo.trackString) == "string"
+                            and upgradeInfo.trackString ~= "" then
+                            slot.rewardUpgradeTrack = upgradeInfo.trackString
+                        end
+                    end
+                end
+            end
 
             if bucketName == "raid" and type(C_WeeklyRewards.GetActivityEncounterInfo) == "function" then
                 local encountersOK, encounters = pcall(C_WeeklyRewards.GetActivityEncounterInfo, activity.type, activity.index)
@@ -1589,7 +1632,9 @@ frame:SetScript("OnEvent", function(self, event, ...)
     elseif event == "PLAYER_LOGOUT" then
         pendingSeasonCaptureKey = nil
         personalBankAccessible = false
-        SaveCharacterData(event, false)
+        -- Inventory APIs can already be torn down here. Preserve the last
+        -- KeystoneLoot ownership snapshot captured by gameplay events.
+        SaveCharacterData(event, false, false)
         StopKeystoneLootIntegration()
     elseif event == "BANKFRAME_OPENED" then
         personalBankAccessible = true

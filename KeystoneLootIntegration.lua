@@ -95,6 +95,28 @@ local function NormalizeBonusIds(values)
     return result
 end
 
+local function IsOwnedItem(itemId)
+    if type(C_Item) ~= "table" then
+        return false
+    end
+
+    if type(C_Item.IsEquippedItem) == "function" then
+        local equippedOK, equipped = pcall(C_Item.IsEquippedItem, itemId)
+        if equippedOK and equipped == true then
+            return true
+        end
+    end
+
+    if type(C_Item.GetItemCount) == "function" then
+        local countOK, count = pcall(C_Item.GetItemCount, itemId, true)
+        if countOK and (tonumber(count) or 0) > 0 then
+            return true
+        end
+    end
+
+    return false
+end
+
 local function VariantKey(bonusIds)
     if type(bonusIds) ~= "table" or #bonusIds == 0 then
         return "base"
@@ -331,6 +353,9 @@ local function NormalizeFavorite(integration, api, entry, characterKey)
         enchant = tonumber(entry.enchant),
         variantKey = variantKey,
     }
+    if IsOwnedItem(itemId) then
+        favorite.owned = true
+    end
 
     if capturedVariant then
         if capturedVariant.metadataComplete ~= true and type(integration.ResolveCapturedVariant) == "function" then

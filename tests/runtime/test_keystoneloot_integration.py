@@ -289,6 +289,34 @@ class KeystoneLootIntegrationRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(harness.evaluate("_test.lastFavoriteCharacterKey"), "Zul'jin-Spee-3")
 
+    def test_owned_favorites_are_marked_from_equipment_bags_or_bank(self):
+        harness, integration = self.make_harness()
+        self.install_ready_api(
+            harness,
+            """{
+                { sourceId = 558, specId = 255, itemId = 251119, tier = 3 },
+                { sourceId = 558, specId = 255, itemId = 251120, tier = 2 },
+                { sourceId = 558, specId = 255, itemId = 251122, tier = 1 },
+            }""",
+        )
+        harness.execute(
+            """
+            C_Item = {
+                IsEquippedItem = function(itemId) return itemId == 251119 end,
+                GetItemCount = function(itemId, includeBank)
+                    return itemId == 251120 and includeBank and 1 or 0
+                end,
+            }
+            """
+        )
+
+        self.start(harness, integration)
+
+        favorites = harness.stored_keystone_loot("Zul'jin-Spee")["favorites"]
+        self.assertTrue(favorites[0]["owned"])
+        self.assertTrue(favorites[1]["owned"])
+        self.assertNotIn("owned", favorites[2])
+
     def test_exact_favorite_variant_metadata_uses_saved_bonus_ids(self):
         harness, integration = self.make_harness()
         self.install_ready_api(
@@ -1425,15 +1453,20 @@ class KeystoneSyncIntegrationLifecycleTests(unittest.TestCase):
         self.assertEqual(self.calls(harness), ["refresh"])
         self.assertEqual(harness.evaluate("_test.reasonAtRefresh"), "BAG_UPDATE_DELAYED")
 
-    def test_player_logout_saves_once_then_stops_integration(self):
+    def test_player_logout_preserves_last_integration_snapshot_then_stops(self):
         harness = self.make_runtime()
         self.fire(harness, "PLAYER_LOGIN")
-        harness.execute("_test.integrationCalls = {}")
+        harness.execute(
+            "_test.integrationCalls = {}; "
+            "KeystoneSyncDB[\"Zul'jin-Spee\"].keystoneLoot = _test.integrationSnapshot"
+        )
 
         self.fire(harness, "PLAYER_LOGOUT")
 
-        self.assertEqual(self.calls(harness), ["refresh", "stop"])
-        self.assertEqual(harness.evaluate("_test.reasonAtRefresh"), "PLAYER_LOGOUT")
+        self.assertEqual(self.calls(harness), ["stop"])
+        record = harness.globals.KeystoneSyncDB["Zul'jin-Spee"]
+        self.assertEqual(record["updatedReason"], "PLAYER_LOGOUT")
+        self.assertTrue(record["keystoneLoot"]["supported"])
 
     def test_manual_command_refreshes_once_and_diagnoses_the_stored_snapshot(self):
         harness = self.make_runtime()

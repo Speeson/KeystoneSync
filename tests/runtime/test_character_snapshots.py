@@ -45,7 +45,11 @@ class CharacterSnapshotTests(unittest.TestCase):
                 if string.find(value, "1002", 1, true) then return 5002 end
                 return 9876
             end
-            C_Item.GetItemUpgradeInfo = function() return { trackString = "Hero", currentLevel = 4, maxLevel = 6 } end
+            C_Item.GetItemUpgradeInfo = function(itemLink)
+                if string.find(itemLink, "item:21", 1, true) then return { trackString = "Myth", currentLevel = 1, maxLevel = 6 } end
+                if string.find(itemLink, "item:31", 1, true) then return { trackString = "Champion", currentLevel = 5, maxLevel = 6 } end
+                return { trackString = "Hero", currentLevel = 4, maxLevel = 6 }
+            end
             ENCHANTED_TOOLTIP_LINE = "Enchanted: %s"
             C_TooltipInfo = C_TooltipInfo or {}
             C_TooltipInfo.GetInventoryItem = function(_, slotID)
@@ -80,6 +84,7 @@ class CharacterSnapshotTests(unittest.TestCase):
             C_WeeklyRewards.GetActivities = function()
                 return {
                     { id = 11, index = 1, type = 1, level = 16, progress = 1, threshold = 2, activityTierID = 101 },
+                    { id = 12, index = 2, type = 1, level = 16, progress = 1, threshold = 1, activityTierID = 102 },
                     { id = 21, index = 1, type = 2, level = 13, progress = 2, threshold = 1, activityTierID = 201 },
                     { id = 31, index = 1, type = 3, level = 8, progress = 3, threshold = 2, activityTierID = 301 },
                 }
@@ -90,6 +95,15 @@ class CharacterSnapshotTests(unittest.TestCase):
             end
             C_WeeklyRewards.GetSortedProgressForActivity = function()
                 return { { activityTierID = 301, difficulty = 8, numPoints = 3 } }
+            end
+            C_WeeklyRewards.GetExampleRewardItemHyperlinks = function(activityID)
+                return "|Hitem:" .. activityID .. "|h[Current Reward]|h", nil
+            end
+            C_Item.GetDetailedItemLevelInfo = function(itemLink)
+                if string.find(itemLink, "item:21", 1, true) then return 318 end
+                if string.find(itemLink, "item:31", 1, true) then return 315 end
+                if string.find(itemLink, "item:12", 1, true) then return 312 end
+                return 311
             end
             function EJ_GetEncounterInfo() return "Test Boss" end
             function EJ_GetInstanceInfo() return "Test Raid" end
@@ -267,6 +281,13 @@ class CharacterSnapshotTests(unittest.TestCase):
         self.assertEqual(vault["world"]["tierProgress"][0]["numPoints"], 3)
         self.assertEqual(vault["raid"]["slots"][0]["encounters"][0]["name"], "Test Boss")
         self.assertEqual(vault["raid"]["slots"][0]["encounters"][0]["instanceName"], "Test Raid")
+        self.assertNotIn("rewardItemLevel", vault["raid"]["slots"][0])
+        self.assertEqual(vault["raid"]["slots"][1]["rewardItemLevel"], 312)
+        self.assertEqual(vault["raid"]["slots"][1]["rewardUpgradeTrack"], "Hero")
+        self.assertEqual(vault["dungeons"]["slots"][0]["rewardItemLevel"], 318)
+        self.assertEqual(vault["dungeons"]["slots"][0]["rewardUpgradeTrack"], "Myth")
+        self.assertEqual(vault["world"]["slots"][0]["rewardItemLevel"], 315)
+        self.assertEqual(vault["world"]["slots"][0]["rewardUpgradeTrack"], "Champion")
 
     def test_transient_vault_api_results_do_not_erase_same_week_details(self):
         harness = self.make_runtime()
@@ -274,13 +295,20 @@ class CharacterSnapshotTests(unittest.TestCase):
         harness.execute(
             "C_MythicPlus.GetRunHistory = function() return {} end; "
             "C_WeeklyRewards.GetActivityEncounterInfo = function() return {} end; "
-            "C_WeeklyRewards.GetSortedProgressForActivity = function() return {} end"
+            "C_WeeklyRewards.GetSortedProgressForActivity = function() return {} end; "
+            "C_WeeklyRewards.GetExampleRewardItemHyperlinks = function() return nil, nil end"
         )
         self.fire(harness, "WEEKLY_REWARDS_UPDATE")
         vault = self.record(harness)["vault"]
         self.assertEqual(vault["dungeons"]["topRuns"][0]["level"], 13)
         self.assertEqual(vault["raid"]["slots"][0]["encounters"][0]["name"], "Test Boss")
+        self.assertEqual(vault["raid"]["slots"][1]["rewardItemLevel"], 312)
+        self.assertEqual(vault["raid"]["slots"][1]["rewardUpgradeTrack"], "Hero")
         self.assertEqual(vault["world"]["tierProgress"][0]["difficulty"], 8)
+        self.assertEqual(vault["dungeons"]["slots"][0]["rewardItemLevel"], 318)
+        self.assertEqual(vault["dungeons"]["slots"][0]["rewardUpgradeTrack"], "Myth")
+        self.assertEqual(vault["world"]["slots"][0]["rewardItemLevel"], 315)
+        self.assertEqual(vault["world"]["slots"][0]["rewardUpgradeTrack"], "Champion")
 
     def test_logout_keeps_last_equipment_talents_and_vault_snapshots(self):
         harness = self.make_runtime()
@@ -332,6 +360,7 @@ class CharacterSnapshotTests(unittest.TestCase):
             "ACTIVE_COMBAT_CONFIG_CHANGED",
             "PLAYER_SPECIALIZATION_CHANGED",
             "TRAIT_SUB_TREE_CHANGED",
+            "GET_ITEM_INFO_RECEIVED",
         ):
             self.assertTrue(events[event])
 

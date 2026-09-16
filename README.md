@@ -74,8 +74,10 @@ A supported snapshot contains the detected API/addon versions, KeystoneLoot's cu
 character key, capture timestamp, normalized favorites, and read-only Voidcore state.
 Favorite identity uses `sourceId`, `specId`, `itemId`, numeric `tier`, and a normalized
 bonus-based `variantKey`; optional enrichment includes `sourceType`, `slotId`, `icon`,
-`bonusIds`, `gems`, `enchant`, exact item level, and exact in-game quality. Item level
-and quality remain nullable while WoW loads an item. Normal KeystoneLoot UI Favorites do
+`bonusIds`, `gems`, `enchant`, exact item level, exact in-game quality, and `owned=true`
+while the item ID is equipped or present in bags or the personal bank. Omitted `owned`
+means the item is not currently known to be owned. Item level and quality remain nullable
+while WoW loads an item. Normal KeystoneLoot UI Favorites do
 not store the selected upgrade-track bonuses, so KeystoneSync captures the exact public
 item-tooltip hyperlink when `FAVORITE_ADDED` fires and retains that variant in its own
 character record. Guarded callbacks refresh only the same active character snapshot.
