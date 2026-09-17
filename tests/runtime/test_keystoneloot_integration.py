@@ -338,6 +338,10 @@ class KeystoneLootIntegrationRuntimeTests(unittest.TestCase):
                     _test.lastInfoLink = link
                     return "Exact favorite", link, 4
                 end,
+                GetItemUpgradeInfo = function(link)
+                    _test.lastUpgradeLink = link
+                    return { trackString = "Hero" }
+                end,
             }
             Item = {
                 CreateFromItemLink = function(link)
@@ -355,7 +359,9 @@ class KeystoneLootIntegrationRuntimeTests(unittest.TestCase):
         self.assertEqual(favorite["variantKey"], "bonus:1498,6652")
         self.assertEqual(favorite["itemLevel"], 402)
         self.assertEqual(favorite["qualityType"], "EPIC")
+        self.assertEqual(favorite["upgradeTrack"], "Hero")
         self.assertIn(":2:6652:1498", harness.evaluate("_test.lastDetailedLink"))
+        self.assertIn(":2:6652:1498", harness.evaluate("_test.lastUpgradeLink"))
 
     def test_normal_ui_favorite_without_bonus_ids_never_persists_base_metadata_as_exact(self):
         harness, integration = self.make_harness()
@@ -448,6 +454,9 @@ class KeystoneLootIntegrationRuntimeTests(unittest.TestCase):
                 GetItemInfo = function(link)
                     return "Hero preview", link, 4
                 end,
+                GetItemUpgradeInfo = function()
+                    return { trackString = "Hero" }
+                end,
             }
             """
         )
@@ -474,6 +483,7 @@ class KeystoneLootIntegrationRuntimeTests(unittest.TestCase):
         self.assertEqual(favorite["variantKey"], "bonus:1674,3206,12845")
         self.assertEqual(favorite["itemLevel"], 318)
         self.assertEqual(favorite["qualityType"], "EPIC")
+        self.assertEqual(favorite["upgradeTrack"], "Hero")
         capture = lua_to_python(
             harness.globals.KeystoneSyncDB["Zul'jin-Spee"]["keystoneLootFavoriteCaptures"]
         )
@@ -521,6 +531,7 @@ class KeystoneLootIntegrationRuntimeTests(unittest.TestCase):
         self.assertEqual(favorite["variantKey"], "bonus:1564,1674,12843")
         self.assertEqual(favorite["itemLevel"], 311)
         self.assertEqual(favorite["qualityType"], "EPIC")
+        self.assertEqual(favorite["upgradeTrack"], "Hero")
         capture = next(
             iter(
                 harness.globals.KeystoneSyncDB["Zul'jin-Spee"][
@@ -735,6 +746,10 @@ class KeystoneLootIntegrationRuntimeTests(unittest.TestCase):
                     if not _test.itemReady then return nil end
                     return "Hero preview", link, 4
                 end,
+                GetItemUpgradeInfo = function()
+                    if not _test.itemReady then return nil end
+                    return { trackString = "Hero" }
+                end,
             }
             Item = { CreateFromItemLink = function()
                 return { ContinueOnItemLoad = function(_, callback)
@@ -763,6 +778,7 @@ class KeystoneLootIntegrationRuntimeTests(unittest.TestCase):
         favorite = harness.stored_keystone_loot("Zul'jin-Spee")["favorites"][0]
         self.assertEqual(favorite["itemLevel"], 318)
         self.assertEqual(favorite["qualityType"], "EPIC")
+        self.assertEqual(favorite["upgradeTrack"], "Hero")
         integration["RefreshCurrent"](integration)
         self.assertEqual(harness.evaluate("#_test.itemCallbacks"), 1)
 

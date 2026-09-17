@@ -17,6 +17,14 @@ local ITEM_QUALITY_TYPES = {
     [6] = "ARTIFACT",
     [7] = "HEIRLOOM",
 }
+local CAPTURED_UPGRADE_TRACKS = {
+    champion = "Champion",
+    hero = "Hero",
+    lfr = "Veteran",
+    normal = "Champion",
+    heroic = "Hero",
+    mythic = "Myth",
+}
 local EXPECTED_API_METHODS = {
     "GetVersion",
     "IsReady",
@@ -269,7 +277,7 @@ end
 
 local function ReadVariantMetadata(itemLink)
     if type(C_Item) ~= "table" then
-        return nil, nil
+        return nil, nil, nil
     end
 
     local itemLevel = nil
@@ -288,7 +296,24 @@ local function ReadVariantMetadata(itemLink)
             qualityType = ITEM_QUALITY_TYPES[tonumber(result[4])]
         end
     end
-    return itemLevel, qualityType
+
+    local upgradeTrack = nil
+    if type(C_Item.GetItemUpgradeInfo) == "function" then
+        local ok, info = pcall(C_Item.GetItemUpgradeInfo, itemLink)
+        if ok and type(info) == "table" and type(info.trackString) == "string"
+            and info.trackString ~= "" and #info.trackString <= 64 then
+            upgradeTrack = info.trackString
+        end
+    end
+    return itemLevel, qualityType, upgradeTrack
+end
+
+local function CapturedUpgradeTrack(capture)
+    if type(capture) ~= "table" then
+        return nil
+    end
+    local key = capture.selectedTrack or capture.selectedDifficulty
+    return type(key) == "string" and CAPTURED_UPGRADE_TRACKS[key:lower()] or nil
 end
 
 local function NormalizeFavorite(integration, api, entry, characterKey)
@@ -358,11 +383,12 @@ local function NormalizeFavorite(integration, api, entry, characterKey)
     end
 
     if capturedVariant then
-        if capturedVariant.metadataComplete ~= true and type(integration.ResolveCapturedVariant) == "function" then
+        if capturedVariant.metadataVersion ~= 2 and type(integration.ResolveCapturedVariant) == "function" then
             integration:ResolveCapturedVariant(api, capturedVariant)
         end
         favorite.itemLevel = capturedVariant.itemLevel
         favorite.qualityType = capturedVariant.qualityType
+        favorite.upgradeTrack = capturedVariant.upgradeTrack or CapturedUpgradeTrack(capturedVariant)
         return favorite
     end
 
@@ -378,21 +404,24 @@ local function NormalizeFavorite(integration, api, entry, characterKey)
     if metadata then
         favorite.itemLevel = metadata.itemLevel
         favorite.qualityType = metadata.qualityType
+        favorite.upgradeTrack = metadata.upgradeTrack
         if metadata.complete or metadata.pending then
             return favorite
         end
     end
 
     local itemLink = BuildFavoriteItemLink(itemId, specId, bonusIds)
-    local itemLevel, qualityType = ReadVariantMetadata(itemLink)
-    if itemLevel and qualityType then
+    local itemLevel, qualityType, upgradeTrack = ReadVariantMetadata(itemLink)
+    if itemLevel and qualityType and upgradeTrack then
         integration.variantMetadata[cacheKey] = {
             complete = true,
             itemLevel = itemLevel,
             qualityType = qualityType,
+            upgradeTrack = upgradeTrack,
         }
         favorite.itemLevel = itemLevel
         favorite.qualityType = qualityType
+        favorite.upgradeTrack = upgradeTrack
         return favorite
     end
 
@@ -401,9 +430,11 @@ local function NormalizeFavorite(integration, api, entry, characterKey)
             pending = true,
             itemLevel = itemLevel,
             qualityType = qualityType,
+            upgradeTrack = upgradeTrack,
         }
         favorite.itemLevel = itemLevel
         favorite.qualityType = qualityType
+        favorite.upgradeTrack = upgradeTrack
         local generation = integration.generation
         local keystoneSyncKey = integration:GetKeystoneSyncKey()
         local ok, item = pcall(Item.CreateFromItemLink, itemLink)
@@ -418,30 +449,35 @@ local function NormalizeFavorite(integration, api, entry, characterKey)
                 if integration:GetKeystoneLootCharacterKey(api) ~= characterKey then
                     return
                 end
-                local resolvedLevel, resolvedQuality = ReadVariantMetadata(itemLink)
+                local resolvedLevel, resolvedQuality, resolvedTrack = ReadVariantMetadata(itemLink)
                 integration.variantMetadata[cacheKey] = {
                     complete = true,
                     itemLevel = resolvedLevel,
                     qualityType = resolvedQuality,
+                    upgradeTrack = resolvedTrack,
                 }
                 integration:RefreshCurrent()
             end)
             if not callbackOK then
                 integration.variantMetadata[cacheKey] = {
                     complete = true, itemLevel = itemLevel, qualityType = qualityType,
+                    upgradeTrack = upgradeTrack,
                 }
             end
         else
             integration.variantMetadata[cacheKey] = {
                 complete = true, itemLevel = itemLevel, qualityType = qualityType,
+                upgradeTrack = upgradeTrack,
             }
         end
     elseif not metadata then
         integration.variantMetadata[cacheKey] = {
             complete = true, itemLevel = itemLevel, qualityType = qualityType,
+            upgradeTrack = upgradeTrack,
         }
         favorite.itemLevel = itemLevel
         favorite.qualityType = qualityType
+        favorite.upgradeTrack = upgradeTrack
     end
 
     return favorite
@@ -645,7 +681,7 @@ function Integration:PersistCapturedVariant(api, characterKey, itemId, targetSpe
 end
 
 function Integration:ResolveCapturedVariant(api, capture)
-    if type(capture) ~= "table" or capture.metadataComplete == true or type(capture.itemString) ~= "string" then
+    if type(capture) ~= "table" or capture.metadataVersion == 2 or type(capture.itemString) ~= "string" then
         return
     end
     local captureKey = CaptureKey(capture.characterKey, capture.sourceId, capture.specId, capture.itemId)
@@ -654,10 +690,12 @@ function Integration:ResolveCapturedVariant(api, capture)
         return
     end
 
-    local itemLevel, qualityType = ReadVariantMetadata(capture.itemString)
+    local itemLevel, qualityType, upgradeTrack = ReadVariantMetadata(capture.itemString)
     capture.itemLevel = itemLevel
     capture.qualityType = qualityType
-    if itemLevel ~= nil and qualityType ~= nil then
+    capture.upgradeTrack = upgradeTrack
+    capture.metadataVersion = 2
+    if itemLevel ~= nil and qualityType ~= nil and upgradeTrack ~= nil then
         capture.metadataComplete = true
         return
     end
@@ -687,9 +725,11 @@ function Integration:ResolveCapturedVariant(api, capture)
         if current ~= capture then
             return
         end
-        local resolvedLevel, resolvedQuality = ReadVariantMetadata(capture.itemString)
+        local resolvedLevel, resolvedQuality, resolvedTrack = ReadVariantMetadata(capture.itemString)
         current.itemLevel = resolvedLevel
         current.qualityType = resolvedQuality
+        current.upgradeTrack = resolvedTrack
+        current.metadataVersion = 2
         current.metadataComplete = true
         self:RefreshCurrent()
     end)
@@ -1052,6 +1092,7 @@ function Integration:FormatFavoriteDiagnostics(snapshot)
             "variantKey=" .. DiagnosticValue(favorite.variantKey),
             "itemLevel=" .. DiagnosticValue(favorite.itemLevel),
             "qualityTypeExact=" .. DiagnosticValue(favorite.qualityType),
+            "upgradeTrack=" .. DiagnosticValue(favorite.upgradeTrack),
             "metadataSource=" .. metadataSource,
         }, " "))
     end
