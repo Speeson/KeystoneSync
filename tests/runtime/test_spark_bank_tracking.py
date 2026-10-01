@@ -5,6 +5,7 @@ from lua_harness import LuaAddonHarness, lua_to_python
 
 CHARACTER_KEY = "Zul'jin-Spee"
 SPARK_ITEM_ID = 274476
+SCALEBOUND_HERALD_FLUTE_ITEM_ID = 275910
 
 
 class SparkBankTrackingTests(unittest.TestCase):
@@ -149,9 +150,9 @@ class SparkBankTrackingTests(unittest.TestCase):
         self.assertEqual(spark["bankQuantity"], 3)
         self.assertEqual(spark["itemQuantity"], 3)
 
-    def test_account_bank_is_never_requested_or_counted(self):
+    def test_account_bank_tracks_flutes_but_does_not_count_them_as_sparks(self):
         harness = self.make_runtime(
-            containers={12: [(SPARK_ITEM_ID, 5)]},
+            containers={12: [(SPARK_ITEM_ID, 5), (SCALEBOUND_HERALD_FLUTE_ITEM_ID, 3)]},
             character_bank_tabs=[6],
         )
 
@@ -160,7 +161,12 @@ class SparkBankTrackingTests(unittest.TestCase):
         spark = self.spark(harness)
         self.assertEqual(spark["bankQuantity"], 0)
         self.assertEqual(spark["itemQuantity"], 0)
-        self.assertEqual(lua_to_python(harness.globals._test.requestedBankTypes), [0])
+        flute = lua_to_python(
+            harness.globals.KeystoneSyncDB[CHARACTER_KEY]["currencies"]["scaleboundHeraldFlute"]
+        )
+        self.assertEqual(flute["warbandBankCount"], 3)
+        self.assertTrue(flute["warbandBankKnown"])
+        self.assertEqual(lua_to_python(harness.globals._test.requestedBankTypes), [0, 0, 2])
 
     def test_closed_bank_keeps_snapshot_but_refreshes_live_carried_count(self):
         harness = self.make_runtime(
