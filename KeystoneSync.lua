@@ -49,6 +49,8 @@ local TIDAL_SPARK_DUST_CURRENCY_ID = 3509
 local TROVEHUNTERS_BOUNTY_ITEM_ID = 274374
 local TROVEHUNTERS_BOUNTY_QUEST_ID = 86371
 local TROVEHUNTERS_BOUNTY_BUFF_SPELL_ID = 1293799
+local SCALEBOUND_HERALD_FLUTE_ITEM_ID = 275910
+local SCALEBOUND_HERALD_FLUTE_ICON_FILE_ID = 1928595
 local pendingSeasonCaptureKey = nil
 local snapshotRefreshPending = false
 local personalBankAccessible = false
@@ -148,6 +150,9 @@ frame:RegisterEvent("QUEST_LOG_UPDATE")
 frame:RegisterEvent("BAG_UPDATE_DELAYED")
 frame:RegisterEvent("BANKFRAME_OPENED")
 frame:RegisterEvent("BANKFRAME_CLOSED")
+frame:RegisterEvent("BANK_TABS_CHANGED")
+frame:RegisterEvent("PLAYERBANKSLOTS_CHANGED")
+frame:RegisterEvent("PLAYER_ACCOUNT_BANK_TAB_SLOTS_CHANGED")
 frame:RegisterEvent("CHALLENGE_MODE_COMPLETED")
 frame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 frame:RegisterEvent("UNIT_INVENTORY_CHANGED")
@@ -410,7 +415,7 @@ local function GetPreyHunts(prev)
     return result
 end
 
-local SPARK_CARRIED_BAG_KEYS = {
+local CARRIED_BAG_KEYS = {
     "Backpack",
     "Bag_1",
     "Bag_2",
@@ -457,18 +462,18 @@ local function CountItemInContainers(itemID, containerIDs)
     return math.max(0, total)
 end
 
-local function CountCarriedSparks()
+local function CountCarriedItem(itemID)
     local bagIndex = Enum and Enum.BagIndex
     if type(bagIndex) ~= "table" then return nil end
 
     local carriedContainers = {}
-    for _, key in ipairs(SPARK_CARRIED_BAG_KEYS) do
+    for _, key in ipairs(CARRIED_BAG_KEYS) do
         local containerID = bagIndex[key]
         if type(containerID) ~= "number" then return nil end
         table.insert(carriedContainers, containerID)
     end
 
-    return CountItemInContainers(SPARK_OF_TIDES_ITEM_ID, carriedContainers)
+    return CountItemInContainers(itemID, carriedContainers)
 end
 
 local function CountPersonalBankSparks()
@@ -485,6 +490,92 @@ local function CountPersonalBankSparks()
         return nil
     end
     return CountItemInContainers(SPARK_OF_TIDES_ITEM_ID, characterBankTabs)
+end
+
+local function CountBankItem(itemID, bankTypeName)
+    local bankType = Enum and Enum.BankType
+    if not C_Bank
+        or type(C_Bank.FetchPurchasedBankTabIDs) ~= "function"
+        or type(bankType) ~= "table"
+        or type(bankType[bankTypeName]) ~= "number" then
+        return nil
+    end
+
+    local ok, bankTabs = pcall(C_Bank.FetchPurchasedBankTabIDs, bankType[bankTypeName])
+    if not ok or type(bankTabs) ~= "table" then
+        return nil
+    end
+    return CountItemInContainers(itemID, bankTabs)
+end
+
+local function GetScaleboundFluteQuantities(prev, preservePreviousSnapshot)
+    local previous = prev and prev.currencies and prev.currencies.scaleboundHeraldFlute
+    local bagCount = nil
+    local bagCountKnown = false
+    local bagsUpdatedAt = nil
+
+    if not preservePreviousSnapshot then
+        local currentBagCount = CountCarriedItem(SCALEBOUND_HERALD_FLUTE_ITEM_ID)
+        if type(currentBagCount) == "number" then
+            bagCount = math.max(0, currentBagCount)
+            bagCountKnown = true
+            bagsUpdatedAt = time()
+        end
+    end
+
+    if not bagCountKnown and previous and type(previous.bagCount) == "number" then
+        bagCount = math.max(0, previous.bagCount)
+        bagCountKnown = true
+        bagsUpdatedAt = previous.bagsUpdatedAt
+    end
+
+    local personalBankCount = nil
+    local personalBankKnown = false
+    local personalBankUpdatedAt = nil
+    local warbandBankCount = nil
+    local warbandBankKnown = false
+    local warbandBankUpdatedAt = nil
+
+    if not preservePreviousSnapshot and personalBankAccessible then
+        local currentPersonalBankCount = CountBankItem(SCALEBOUND_HERALD_FLUTE_ITEM_ID, "Character")
+        if type(currentPersonalBankCount) == "number" then
+            personalBankCount = currentPersonalBankCount
+            personalBankKnown = true
+            personalBankUpdatedAt = time()
+        end
+
+        local currentWarbandBankCount = CountBankItem(SCALEBOUND_HERALD_FLUTE_ITEM_ID, "Account")
+        if type(currentWarbandBankCount) == "number" then
+            warbandBankCount = currentWarbandBankCount
+            warbandBankKnown = true
+            warbandBankUpdatedAt = time()
+        end
+    end
+
+    if not personalBankKnown and previous and previous.personalBankKnown == true and type(previous.personalBankCount) == "number" then
+        personalBankCount = math.max(0, previous.personalBankCount)
+        personalBankKnown = true
+        personalBankUpdatedAt = previous.personalBankUpdatedAt
+    end
+    if not warbandBankKnown and previous and previous.warbandBankKnown == true and type(previous.warbandBankCount) == "number" then
+        warbandBankCount = math.max(0, previous.warbandBankCount)
+        warbandBankKnown = true
+        warbandBankUpdatedAt = previous.warbandBankUpdatedAt
+    end
+
+    return {
+        itemID = SCALEBOUND_HERALD_FLUTE_ITEM_ID,
+        iconFileID = SCALEBOUND_HERALD_FLUTE_ICON_FILE_ID,
+        bagCount = bagCount or 0,
+        bagCountKnown = bagCountKnown,
+        bagsUpdatedAt = bagsUpdatedAt,
+        personalBankCount = personalBankCount,
+        personalBankKnown = personalBankKnown,
+        personalBankUpdatedAt = personalBankUpdatedAt,
+        warbandBankCount = warbandBankCount,
+        warbandBankKnown = warbandBankKnown,
+        warbandBankUpdatedAt = warbandBankUpdatedAt,
+    }
 end
 
 local function GetSparkQuantities(prev, bankDataAuthoritative, preservePreviousSnapshot)
@@ -517,7 +608,7 @@ local function GetSparkQuantities(prev, bankDataAuthoritative, preservePreviousS
         }
     end
 
-    local carriedQuantity = CountCarriedSparks()
+    local carriedQuantity = CountCarriedItem(SPARK_OF_TIDES_ITEM_ID)
     if type(carriedQuantity) ~= "number" then
         carriedQuantity = previousSpark
             and type(previousSpark.inventoryQuantity) == "number"
@@ -693,6 +784,8 @@ local function GetCurrencyData(prev, preserveSparkSnapshot)
         iconPath = GetTexturePath(iconFileID),
         weekKey = weekKey,
     }
+
+    result.scaleboundHeraldFlute = GetScaleboundFluteQuantities(prev, preserveSparkSnapshot)
 
     return result
 end
