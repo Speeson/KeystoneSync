@@ -1,0 +1,12 @@
+{
+  "component": "addon",
+  "current_version": "0.5.0",
+  "version": "0.6.0",
+  "bump": "minor",
+  "tag": "v0.6.0",
+  "release_name": "KeystoneSync 0.6.0",
+  "asset": "KeystoneSync-v0.6.0.zip",
+  "changesets": [
+    "2026-10-01-scalebound-herald-flute.json"
+  ]
+}
