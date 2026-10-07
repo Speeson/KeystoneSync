@@ -119,6 +119,10 @@ identity, Favorite bonus IDs, captured track/rank context, variant key, exact it
 and metadata source. It never prints account identifiers, authentication data, or unrelated
 SavedVariables.
 
+If you turned in Orin Straylight's weekly Nebulous Voidcore quest before installing the version
+that records quest turn-ins, use `/ksync voidcore completada` on that character. This confirms
+completion only for the current week; the addon clears it at the next Wednesday reset.
+
 ## SavedVariables location
 
 ```

@@ -66,6 +66,35 @@ class OrinVoidcoreTests(unittest.TestCase):
         harness.execute('_test.weekKey = "2026-10-14"')
         self.assertFalse(self.snapshot(harness)["questCompleted"])
 
+    def test_turn_in_records_orin_quest_before_completion_flag_updates(self):
+        harness = self.make_runtime()
+        frame = harness.globals._test.frames[1]
+        frame["OnEvent"](frame, "QUEST_TURNED_IN", 98015)
+        self.assertTrue(self.snapshot(harness)["questCompleted"])
+        harness.execute('_test.weekKey = "2026-10-14"')
+        self.assertFalse(self.snapshot(harness)["questCompleted"])
+
+    def test_manual_confirmation_recovers_an_already_delivered_quest_for_this_week(self):
+        harness = self.make_runtime()
+        self.assertFalse(self.snapshot(harness)["questCompleted"])
+        harness.globals.SlashCmdList["KEYSTONESYNC"]("voidcore completada")
+        core = self.snapshot(harness)
+        self.assertTrue(core["questCompleted"])
+        self.assertEqual(core["weekKey"], "2026-10-07")
+        harness.execute('_test.weekKey = "2026-10-14"')
+        self.assertFalse(self.snapshot(harness)["questCompleted"])
+
+    def test_turn_in_survives_currency_data_temporarily_unavailable(self):
+        harness = self.make_runtime()
+        harness.execute("C_CurrencyInfo.GetCurrencyInfo = function() return nil end")
+        frame = harness.globals._test.frames[1]
+        frame["OnEvent"](frame, "QUEST_TURNED_IN", 98015)
+        saved = lua_to_python(harness.globals.KeystoneSyncDB[CHARACTER_KEY]["currencies"])
+        self.assertTrue(saved["nebulousVoidcore"]["questCompleted"])
+        frame["OnEvent"](frame, "QUEST_LOG_UPDATE")
+        saved = lua_to_python(harness.globals.KeystoneSyncDB[CHARACTER_KEY]["currencies"])
+        self.assertTrue(saved["nebulousVoidcore"]["questCompleted"])
+
 
 if __name__ == "__main__":
     unittest.main()

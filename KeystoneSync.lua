@@ -148,6 +148,7 @@ frame:RegisterEvent("CHALLENGE_MODE_MAPS_UPDATE")
 frame:RegisterEvent("MYTHIC_PLUS_NEW_WEEKLY_RECORD")
 frame:RegisterEvent("CURRENCY_DISPLAY_UPDATE")
 frame:RegisterEvent("QUEST_LOG_UPDATE")
+frame:RegisterEvent("QUEST_TURNED_IN")
 frame:RegisterEvent("BAG_UPDATE_DELAYED")
 frame:RegisterEvent("BANKFRAME_OPENED")
 frame:RegisterEvent("BANKFRAME_CLOSED")
@@ -690,9 +691,9 @@ local function GetCurrencyData(prev, preserveSparkSnapshot)
             local totalEarned = info.totalEarned or 0
             local quantityEarnedThisWeek = info.quantityEarnedThisWeek or 0
             local useTotalEarnedForMaxQty = info.useTotalEarnedForMaxQty == true
-            if useTotalEarnedForMaxQty and maxQuantity <= 0 then
+            if useTotalEarnedForMaxQty and (currencyDef.key == "tidalSparkDust" or maxQuantity <= 0) then
                 local tooltipMaximum = GetCurrencyTooltipMaximum(currencyDef.id)
-                if tooltipMaximum and tooltipMaximum >= totalEarned then
+                if tooltipMaximum and tooltipMaximum > maxQuantity and tooltipMaximum >= totalEarned then
                     maxQuantity = tooltipMaximum
                 end
             end
@@ -726,6 +727,11 @@ local function GetCurrencyData(prev, preserveSparkSnapshot)
         end
     end
 
+    local previousVoidcore = prev and prev.currencies and prev.currencies.nebulousVoidcore
+    if not result.nebulousVoidcore and previousVoidcore and previousVoidcore.questCompleted
+        and previousVoidcore.weekKey == GetWeeklyResetKey() then
+        result.nebulousVoidcore = previousVoidcore
+    end
     local voidcore = result.nebulousVoidcore
     if voidcore then
         local weekKey = GetWeeklyResetKey()
@@ -737,7 +743,6 @@ local function GetCurrencyData(prev, preserveSparkSnapshot)
                 break
             end
         end
-        local previousVoidcore = prev and prev.currencies and prev.currencies.nebulousVoidcore
         if not questCompleted and previousVoidcore and previousVoidcore.weekKey == weekKey and previousVoidcore.questCompleted then
             questCompleted = true
         end
@@ -1700,6 +1705,20 @@ local function SaveCharacterData(reason, updateSeason, refreshKeystoneLoot)
     return nil
 end
 
+local function MarkVoidcoreQuestCompleted(reason)
+    SaveCharacterData(reason, false, false)
+    local current = KeystoneSyncDB and KeystoneSyncDB[GetCharacterKey()]
+    if not current then return false end
+    current.currencies = current.currencies or {}
+    local voidcore = current.currencies.nebulousVoidcore or { id = 3513, quantity = 0 }
+    current.currencies.nebulousVoidcore = voidcore
+    voidcore.questCompleted = true
+    voidcore.weekKey = GetWeeklyResetKey()
+    voidcore.isWeeklyComplete = true
+    voidcore.displayColor = "red"
+    return true
+end
+
 local function ScheduleSnapshotRefresh()
     if snapshotRefreshPending or not C_Timer or type(C_Timer.After) ~= "function" then return end
     snapshotRefreshPending = true
@@ -1759,6 +1778,14 @@ frame:SetScript("OnEvent", function(self, event, ...)
         SaveCharacterData(event, false)
     elseif event == "CHALLENGE_MODE_COMPLETED" or event == "MYTHIC_PLUS_NEW_WEEKLY_RECORD" then
         SaveCharacterData(event, true)
+    elseif event == "QUEST_TURNED_IN" then
+        local questID = ...
+        for _, orinQuestID in ipairs(ORIN_VOIDCORE_QUEST_IDS) do
+            if questID == orinQuestID then
+                MarkVoidcoreQuestCompleted(event)
+                break
+            end
+        end
     elseif event == "PLAYER_EQUIPMENT_CHANGED"
         or (event == "UNIT_INVENTORY_CHANGED" and (...) == "player")
         or event == "TRAIT_CONFIG_LIST_UPDATED"
@@ -1774,8 +1801,16 @@ end)
 
 SLASH_KEYSTONESYNC1 = "/ksync"
 SlashCmdList["KEYSTONESYNC"] = function(message)
-    local keystoneLootSnapshot = SaveCharacterData("MANUAL_COMMAND", true)
     local command = type(message) == "string" and string.lower(string.match(message, "^%s*(.-)%s*$")) or ""
+    if command == "voidcore completada" then
+        if MarkVoidcoreQuestCompleted("VOIDCORE_MANUAL_CONFIRMATION") then
+            print(PREFIX .. " Misión de Orin marcada como completada para esta semana.")
+        else
+            print(PREFIX .. " No se ha podido registrar el Voidcore de este personaje.")
+        end
+        return
+    end
+    local keystoneLootSnapshot = SaveCharacterData("MANUAL_COMMAND", true)
     if command == "kl" or command == "keystoneloot" then
         PrintKeystoneLootFavoriteDiagnostics(keystoneLootSnapshot)
         return

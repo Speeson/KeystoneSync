@@ -176,10 +176,10 @@ class CharacterSnapshotTests(unittest.TestCase):
                 if currencyID ~= 3509 then return nil end
                 return {
                     name = "Tidal Spark Dust",
-                    quantity = 6,
-                    maxQuantity = 0,
+                    quantity = _test.earned,
+                    maxQuantity = _test.apiCap,
                     maxWeeklyQuantity = 0,
-                    totalEarned = 6,
+                    totalEarned = _test.earned,
                     quantityEarnedThisWeek = 0,
                     useTotalEarnedForMaxQty = true,
                     canEarnPerWeek = false,
@@ -192,21 +192,24 @@ class CharacterSnapshotTests(unittest.TestCase):
                 if currencyID ~= 3509 then return nil end
                 return { lines = {
                     { type = 0, leftText = "Earn 1 each week" },
-                    { type = 14, leftText = "Current Season Maximum", rightText = "6 / 6" },
+                    { type = 14, leftText = "Current Season Maximum", rightText = tostring(_test.earned) .. " / 11" },
                 } }
             end
             '''
         )
 
-        self.fire(harness, "PLAYER_LOGIN")
-        currency = self.record(harness)["currencies"]["tidalSparkDust"]
+        for api_cap in (0, 9, 10):
+            with self.subTest(api_cap=api_cap):
+                harness.execute(f"_test.apiCap = {api_cap}; _test.earned = {api_cap or 9}")
+                self.fire(harness, "PLAYER_LOGIN")
+                currency = self.record(harness)["currencies"]["tidalSparkDust"]
 
-        self.assertEqual(currency["maxWeeklyQuantity"], 0)
-        self.assertEqual(currency["maxQuantity"], 6)
-        self.assertEqual(currency["totalEarned"], 6)
-        self.assertTrue(currency["useTotalEarnedForMaxQty"])
-        self.assertTrue(currency["isSeasonMaxed"])
-        self.assertTrue(currency["isMaxed"])
+                self.assertEqual(currency["maxWeeklyQuantity"], 0)
+                self.assertEqual(currency["maxQuantity"], 11)
+                self.assertEqual(currency["totalEarned"], api_cap or 9)
+                self.assertTrue(currency["useTotalEarnedForMaxQty"])
+                self.assertFalse(currency["isSeasonMaxed"])
+                self.assertFalse(currency["isMaxed"])
 
     def test_equipment_preserves_real_variant_and_gems(self):
         harness = self.make_runtime()
