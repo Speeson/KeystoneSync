@@ -6,6 +6,7 @@ local KeystoneLootIntegration = KeystoneSync and KeystoneSync.KeystoneLootIntegr
 local REGION = "eu"
 local MAX_LEVEL = 90
 local SEASON_CAPTURE_DELAY_SECONDS = 20
+local ORIN_VOIDCORE_QUEST_IDS = { 98016, 98015, 98012 } -- Gold, Voidlight Marl, Veteran Mistcrest
 
 local CURRENCIES = {
     { key = "adventurerMistcrest", id = 3442 },
@@ -723,6 +724,27 @@ local function GetCurrencyData(prev, preserveSparkSnapshot)
                 displayColor = isMaxed and "red" or nil,
             }
         end
+    end
+
+    local voidcore = result.nebulousVoidcore
+    if voidcore then
+        local weekKey = GetWeeklyResetKey()
+        local questCompleted = false
+        for _, questID in ipairs(ORIN_VOIDCORE_QUEST_IDS) do
+            local ok, completed = pcall(C_QuestLog.IsQuestFlaggedCompleted, questID)
+            if ok and (not issecretvalue or not issecretvalue(completed)) and completed == true then
+                questCompleted = true
+                break
+            end
+        end
+        local previousVoidcore = prev and prev.currencies and prev.currencies.nebulousVoidcore
+        if not questCompleted and previousVoidcore and previousVoidcore.weekKey == weekKey and previousVoidcore.questCompleted then
+            questCompleted = true
+        end
+        voidcore.questCompleted = questCompleted
+        voidcore.weekKey = weekKey
+        voidcore.isWeeklyComplete = voidcore.isMaxed or questCompleted
+        voidcore.displayColor = voidcore.isWeeklyComplete and "red" or nil
     end
 
     local sparkDust = result.tidalSparkDust
