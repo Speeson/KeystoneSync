@@ -211,6 +211,40 @@ class CharacterSnapshotTests(unittest.TestCase):
                 self.assertFalse(currency["isSeasonMaxed"])
                 self.assertFalse(currency["isMaxed"])
 
+    def test_spark_cap_survives_tooltip_unavailable_on_logout(self):
+        harness = self.make_runtime()
+        harness.execute(
+            r'''
+            C_CurrencyInfo.GetCurrencyInfo = function(currencyID)
+                if currencyID ~= 3509 then return nil end
+                return {
+                    name = "Tidal Spark Dust",
+                    quantity = 10,
+                    maxQuantity = 10,
+                    totalEarned = 10,
+                    useTotalEarnedForMaxQty = true,
+                }
+            end
+            _test.tooltipAvailable = true
+            C_TooltipInfo.GetCurrencyByID = function(currencyID)
+                if currencyID ~= 3509 or not _test.tooltipAvailable then return nil end
+                return { lines = {
+                    { type = 14, leftText = "Current Season Maximum", rightText = "10 / 11" },
+                } }
+            end
+            '''
+        )
+
+        self.fire(harness, "PLAYER_LOGIN")
+        self.assertEqual(self.record(harness)["currencies"]["tidalSparkDust"]["maxQuantity"], 11)
+
+        harness.execute("_test.tooltipAvailable = false")
+        self.fire(harness, "PLAYER_LOGOUT")
+        currency = self.record(harness)["currencies"]["tidalSparkDust"]
+        self.assertEqual(currency["maxQuantity"], 11)
+        self.assertFalse(currency["isSeasonMaxed"])
+        self.assertFalse(currency["isMaxed"])
+
     def test_equipment_preserves_real_variant_and_gems(self):
         harness = self.make_runtime()
         self.fire(harness, "PLAYER_LOGIN")

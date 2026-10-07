@@ -697,6 +697,15 @@ local function GetCurrencyData(prev, preserveSparkSnapshot)
                     maxQuantity = tooltipMaximum
                 end
             end
+            if currencyDef.key == "tidalSparkDust" and useTotalEarnedForMaxQty then
+                local previousCurrency = prev and prev.currencies and prev.currencies.tidalSparkDust
+                if previousCurrency and previousCurrency.id == currencyDef.id
+                    and previousCurrency.useTotalEarnedForMaxQty == true
+                    and type(previousCurrency.maxQuantity) == "number"
+                    and previousCurrency.maxQuantity > maxQuantity then
+                    maxQuantity = previousCurrency.maxQuantity
+                end
+            end
             local isWeeklyMaxed = maxWeeklyQuantity > 0 and quantityEarnedThisWeek >= maxWeeklyQuantity
             local isSeasonMaxed = useTotalEarnedForMaxQty and maxQuantity > 0 and totalEarned >= maxQuantity
             local isTotalMaxed = not useTotalEarnedForMaxQty and maxQuantity > 0 and quantity >= maxQuantity
