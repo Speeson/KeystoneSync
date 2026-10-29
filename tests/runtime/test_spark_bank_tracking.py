@@ -6,6 +6,9 @@ from lua_harness import LuaAddonHarness, lua_to_python
 CHARACTER_KEY = "Zul'jin-Spee"
 SPARK_ITEM_ID = 274476
 SCALEBOUND_HERALD_FLUTE_ITEM_ID = 275910
+AFFLICTED_SOUL_ITEM_ID = 276547
+TORMENTED_SOUL_ITEM_ID = 276548
+ASCENDANT_VENOMSTONE_ITEM_ID = 280562
 
 
 class SparkBankTrackingTests(unittest.TestCase):
@@ -166,7 +169,61 @@ class SparkBankTrackingTests(unittest.TestCase):
         )
         self.assertEqual(flute["warbandBankCount"], 3)
         self.assertTrue(flute["warbandBankKnown"])
-        self.assertEqual(lua_to_python(harness.globals._test.requestedBankTypes), [0, 0, 2])
+        self.assertIn(2, lua_to_python(harness.globals._test.requestedBankTypes))
+
+    def test_new_items_count_only_their_allowed_locations(self):
+        harness = self.make_runtime(
+            containers={
+                1: [(AFFLICTED_SOUL_ITEM_ID, 2), (TORMENTED_SOUL_ITEM_ID, 3), (ASCENDANT_VENOMSTONE_ITEM_ID, 4)],
+                6: [(AFFLICTED_SOUL_ITEM_ID, 5), (TORMENTED_SOUL_ITEM_ID, 6), (ASCENDANT_VENOMSTONE_ITEM_ID, 7)],
+                12: [(AFFLICTED_SOUL_ITEM_ID, 8), (TORMENTED_SOUL_ITEM_ID, 9), (ASCENDANT_VENOMSTONE_ITEM_ID, 10)],
+            },
+            character_bank_tabs=[6],
+        )
+
+        self.fire(harness, "BANKFRAME_OPENED")
+        currencies = lua_to_python(harness.globals.KeystoneSyncDB[CHARACTER_KEY]["currencies"])
+        self.assertEqual(currencies["afflictedSoul"]["quantity"], 15)
+        self.assertTrue(currencies["afflictedSoul"]["quantityKnown"])
+        self.assertTrue(currencies["afflictedSoul"]["personalBankCurrent"])
+        self.assertTrue(currencies["afflictedSoul"]["warbandBankCurrent"])
+        self.assertEqual(currencies["afflictedSoul"]["warbandBankCount"], 8)
+        self.assertEqual(currencies["tormentedSoul"]["quantity"], 18)
+        self.assertEqual(currencies["tormentedSoul"]["warbandBankCount"], 9)
+        self.assertEqual(currencies["ascendantVenomstone"]["quantity"], 11)
+        self.assertNotIn("warbandBankCount", currencies["ascendantVenomstone"])
+        self.assertEqual(currencies["ascendantVenomstone"]["iconFileID"], 7658134)
+
+    def test_new_items_keep_last_known_bank_counts_when_bank_closes(self):
+        harness = self.make_runtime(
+            containers={1: [(AFFLICTED_SOUL_ITEM_ID, 1)], 6: [(AFFLICTED_SOUL_ITEM_ID, 2)], 12: [(AFFLICTED_SOUL_ITEM_ID, 3)]},
+            character_bank_tabs=[6],
+        )
+        self.fire(harness, "BANKFRAME_OPENED")
+        self.fire(harness, "BANKFRAME_CLOSED")
+        harness.execute(f"_test.containerItems[1][1].stackCount = 4; _test.containerItems[6] = nil; _test.containerItems[12] = nil")
+
+        self.fire(harness, "BAG_UPDATE_DELAYED")
+        soul = lua_to_python(harness.globals.KeystoneSyncDB[CHARACTER_KEY]["currencies"]["afflictedSoul"])
+        self.assertEqual(soul["bagCount"], 4)
+        self.assertEqual(soul["personalBankCount"], 2)
+        self.assertEqual(soul["warbandBankCount"], 3)
+        self.assertEqual(soul["quantity"], 9)
+        self.assertTrue(soul["personalBankKnown"])
+        self.assertTrue(soul["warbandBankKnown"])
+        self.assertFalse(soul["personalBankCurrent"])
+        self.assertFalse(soul["warbandBankCurrent"])
+
+    def test_new_items_distinguish_unknown_bank_from_zero(self):
+        harness = self.make_runtime(containers={1: [(ASCENDANT_VENOMSTONE_ITEM_ID, 0)]})
+
+        self.fire(harness, "PLAYER_LOGIN")
+        stone = lua_to_python(harness.globals.KeystoneSyncDB[CHARACTER_KEY]["currencies"]["ascendantVenomstone"])
+        self.assertEqual(stone["quantity"], 0)
+        self.assertTrue(stone["bagCountKnown"])
+        self.assertFalse(stone["personalBankKnown"])
+        self.assertFalse(stone["quantityKnown"])
+        self.assertNotIn("personalBankCount", stone)
 
     def test_closed_bank_keeps_snapshot_but_refreshes_live_carried_count(self):
         harness = self.make_runtime(

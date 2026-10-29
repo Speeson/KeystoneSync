@@ -77,6 +77,11 @@ class Season2ContractTests(unittest.TestCase):
             "restoredCofferKey": {"id": 3028, "quantityId": None},
             "untaintedManaCrystals": {"id": 3356, "quantityId": None},
             "nebulousVoidcore": {"id": 3513, "quantityId": 3418},
+            "undercoin": {"id": 2803, "quantityId": None},
+            "remnantOfAnguish": {"id": 3392, "quantityId": None},
+            "timewarpedBadge": {"id": 1166, "quantityId": None},
+            "tradersTender": {"id": 2032, "quantityId": None},
+            "voidlightMarl": {"id": 3316, "quantityId": None},
         }
         actual = {
             key: {"id": defn["id"], "quantityId": defn["quantityId"]}

@@ -1,0 +1,17 @@
+{
+  "components": ["addon"],
+  "type": "minor",
+  "category": "added",
+  "summary": "Registra nuevas monedas y objetos para las tarjetas personalizables.",
+  "details": [
+    "Registra Undercoin, Remnant of Anguish, Timewarped Badge, Trader's Tender y Voidlight Marl.",
+    "Cuenta Afflicted Soul, Tormented Soul y Ascendant Venomstone en bolsas y bancos compatibles, conservando las últimas lecturas bancarias.",
+    "Corrige los máximos de los blasones de bruma cuando la API devuelve la cantidad obtenida como límite tras eliminar el tope."
+  ],
+  "summaryEn": "Track additional currencies and items for customizable cards.",
+  "detailsEn": [
+    "Tracks Undercoin, Remnant of Anguish, Timewarped Badge, Trader's Tender, and Voidlight Marl.",
+    "Counts Afflicted Soul, Tormented Soul, and Ascendant Venomstone in bags and eligible banks while preserving last-known bank readings.",
+    "Corrects Mistcrest caps when the API mirrors earned quantity after the cap lift."
+  ]
+}

@@ -168,6 +168,84 @@ class CharacterSnapshotTests(unittest.TestCase):
     def record(self, harness):
         return lua_to_python(harness.globals.KeystoneSyncDB[CHARACTER_KEY])
 
+    def test_new_currency_balances_and_account_scope_are_saved(self):
+        harness = self.make_runtime()
+        harness.execute(
+            r'''
+            C_CurrencyInfo.GetCurrencyInfo = function(currencyID)
+                local values = {
+                    [2803] = 12, [3392] = 34, [1166] = 56,
+                    [2032] = 78, [3316] = 90,
+                }
+                if not values[currencyID] then return nil end
+                return {
+                    name = "Test currency", quantity = values[currencyID],
+                    maxQuantity = 0, maxWeeklyQuantity = 0,
+                    iconFileID = currencyID + 1000,
+                    isAccountWide = currencyID == 2032,
+                }
+            end
+            '''
+        )
+
+        self.fire(harness, "PLAYER_LOGIN")
+        currencies = self.record(harness)["currencies"]
+        for key, currency_id, quantity in (
+            ("undercoin", 2803, 12),
+            ("remnantOfAnguish", 3392, 34),
+            ("timewarpedBadge", 1166, 56),
+            ("tradersTender", 2032, 78),
+            ("voidlightMarl", 3316, 90),
+        ):
+            with self.subTest(key=key):
+                self.assertEqual(currencies[key]["id"], currency_id)
+                self.assertEqual(currencies[key]["quantity"], quantity)
+                self.assertEqual(currencies[key]["iconFileID"], currency_id + 1000)
+                self.assertEqual(currencies[key]["isAccountWide"], key == "tradersTender")
+
+    def test_lifted_mistcrest_cap_does_not_equal_earned_balance(self):
+        harness = self.make_runtime()
+        harness.execute(
+            r'''
+            C_CurrencyInfo.GetCurrencyInfo = function(currencyID)
+                if currencyID ~= 3445 then return nil end
+                return {
+                    name = "Hero Mistcrest", quantity = 410,
+                    maxQuantity = 1530, totalEarned = 1530,
+                    maxWeeklyQuantity = 0, quantityEarnedThisWeek = 0,
+                    useTotalEarnedForMaxQty = true, canEarnPerWeek = false,
+                }
+            end
+            '''
+        )
+
+        self.fire(harness, "PLAYER_LOGIN")
+        crest = self.record(harness)["currencies"]["heroMistcrest"]
+        self.assertEqual(crest["maxQuantity"], 0)
+        self.assertEqual(crest["maxWeeklyQuantity"], 0)
+        self.assertFalse(crest["isMaxed"])
+
+    def test_mistcrest_real_remaining_cap_is_preserved(self):
+        harness = self.make_runtime()
+        harness.execute(
+            r'''
+            C_CurrencyInfo.GetCurrencyInfo = function(currencyID)
+                if currencyID ~= 3445 then return nil end
+                return {
+                    name = "Hero Mistcrest", quantity = 410,
+                    maxQuantity = 1600, totalEarned = 1530,
+                    maxWeeklyQuantity = 0, quantityEarnedThisWeek = 0,
+                    useTotalEarnedForMaxQty = true, canEarnPerWeek = false,
+                }
+            end
+            '''
+        )
+
+        self.fire(harness, "PLAYER_LOGIN")
+        crest = self.record(harness)["currencies"]["heroMistcrest"]
+        self.assertEqual(crest["maxQuantity"], 1600)
+        self.assertFalse(crest["isMaxed"])
+
     def test_currency_total_tooltip_supplies_dynamic_season_cap(self):
         harness = self.make_runtime()
         harness.execute(

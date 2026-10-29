@@ -20,6 +20,11 @@ local CURRENCIES = {
     { key = "restoredCofferKey", id = 3028 },
     { key = "untaintedManaCrystals", id = 3356 },
     { key = "nebulousVoidcore", id = 3513, quantityId = 3418 },
+    { key = "undercoin", id = 2803 },
+    { key = "remnantOfAnguish", id = 3392 },
+    { key = "timewarpedBadge", id = 1166 },
+    { key = "tradersTender", id = 2032 },
+    { key = "voidlightMarl", id = 3316 },
 }
 
 local EQUIPMENT_SLOTS = {
@@ -52,6 +57,11 @@ local TROVEHUNTERS_BOUNTY_QUEST_ID = 86371
 local TROVEHUNTERS_BOUNTY_BUFF_SPELL_ID = 1293799
 local SCALEBOUND_HERALD_FLUTE_ITEM_ID = 275910
 local SCALEBOUND_HERALD_FLUTE_ICON_FILE_ID = 1928595
+local TRACKED_ITEMS = {
+    { key = "afflictedSoul", itemID = 276547, iconFileID = 136214, includeWarbandBank = true },
+    { key = "tormentedSoul", itemID = 276548, iconFileID = 236300, includeWarbandBank = true },
+    { key = "ascendantVenomstone", itemID = 280562, iconFileID = 7658134, includeWarbandBank = false },
+}
 local pendingSeasonCaptureKey = nil
 local snapshotRefreshPending = false
 local personalBankAccessible = false
@@ -510,14 +520,14 @@ local function CountBankItem(itemID, bankTypeName)
     return CountItemInContainers(itemID, bankTabs)
 end
 
-local function GetScaleboundFluteQuantities(prev, preservePreviousSnapshot)
-    local previous = prev and prev.currencies and prev.currencies.scaleboundHeraldFlute
+local function GetTrackedItemQuantities(prev, key, itemID, fallbackIconFileID, includeWarbandBank, preservePreviousSnapshot)
+    local previous = prev and prev.currencies and prev.currencies[key]
     local bagCount = nil
     local bagCountKnown = false
     local bagsUpdatedAt = nil
 
     if not preservePreviousSnapshot then
-        local currentBagCount = CountCarriedItem(SCALEBOUND_HERALD_FLUTE_ITEM_ID)
+        local currentBagCount = CountCarriedItem(itemID)
         if type(currentBagCount) == "number" then
             bagCount = math.max(0, currentBagCount)
             bagCountKnown = true
@@ -533,24 +543,30 @@ local function GetScaleboundFluteQuantities(prev, preservePreviousSnapshot)
 
     local personalBankCount = nil
     local personalBankKnown = false
+    local personalBankCurrent = false
     local personalBankUpdatedAt = nil
     local warbandBankCount = nil
     local warbandBankKnown = false
+    local warbandBankCurrent = false
     local warbandBankUpdatedAt = nil
 
     if not preservePreviousSnapshot and personalBankAccessible then
-        local currentPersonalBankCount = CountBankItem(SCALEBOUND_HERALD_FLUTE_ITEM_ID, "Character")
+        local currentPersonalBankCount = CountBankItem(itemID, "Character")
         if type(currentPersonalBankCount) == "number" then
             personalBankCount = currentPersonalBankCount
             personalBankKnown = true
+            personalBankCurrent = true
             personalBankUpdatedAt = time()
         end
 
-        local currentWarbandBankCount = CountBankItem(SCALEBOUND_HERALD_FLUTE_ITEM_ID, "Account")
-        if type(currentWarbandBankCount) == "number" then
-            warbandBankCount = currentWarbandBankCount
-            warbandBankKnown = true
-            warbandBankUpdatedAt = time()
+        if includeWarbandBank then
+            local currentWarbandBankCount = CountBankItem(itemID, "Account")
+            if type(currentWarbandBankCount) == "number" then
+                warbandBankCount = currentWarbandBankCount
+                warbandBankKnown = true
+                warbandBankCurrent = true
+                warbandBankUpdatedAt = time()
+            end
         end
     end
 
@@ -559,25 +575,45 @@ local function GetScaleboundFluteQuantities(prev, preservePreviousSnapshot)
         personalBankKnown = true
         personalBankUpdatedAt = previous.personalBankUpdatedAt
     end
-    if not warbandBankKnown and previous and previous.warbandBankKnown == true and type(previous.warbandBankCount) == "number" then
+    if includeWarbandBank and not warbandBankKnown and previous and previous.warbandBankKnown == true and type(previous.warbandBankCount) == "number" then
         warbandBankCount = math.max(0, previous.warbandBankCount)
         warbandBankKnown = true
         warbandBankUpdatedAt = previous.warbandBankUpdatedAt
     end
 
-    return {
-        itemID = SCALEBOUND_HERALD_FLUTE_ITEM_ID,
-        iconFileID = SCALEBOUND_HERALD_FLUTE_ICON_FILE_ID,
+    local iconFileID = fallbackIconFileID
+    if C_Item and type(C_Item.GetItemIconByID) == "function" then
+        local ok, currentIconFileID = pcall(C_Item.GetItemIconByID, itemID)
+        if ok and type(currentIconFileID) == "number"
+            and (not issecretvalue or not issecretvalue(currentIconFileID)) then
+            iconFileID = currentIconFileID
+        end
+    end
+    local quantity = (bagCountKnown and bagCount or 0)
+        + (personalBankKnown and personalBankCount or 0)
+        + (warbandBankKnown and warbandBankCount or 0)
+
+    local itemData = {
+        itemID = itemID,
+        iconFileID = iconFileID,
+        iconPath = GetTexturePath(iconFileID),
+        quantity = quantity,
+        quantityKnown = bagCountKnown and personalBankKnown and (not includeWarbandBank or warbandBankKnown),
         bagCount = bagCount or 0,
         bagCountKnown = bagCountKnown,
         bagsUpdatedAt = bagsUpdatedAt,
         personalBankCount = personalBankCount,
         personalBankKnown = personalBankKnown,
+        personalBankCurrent = personalBankCurrent,
         personalBankUpdatedAt = personalBankUpdatedAt,
-        warbandBankCount = warbandBankCount,
-        warbandBankKnown = warbandBankKnown,
-        warbandBankUpdatedAt = warbandBankUpdatedAt,
     }
+    if includeWarbandBank then
+        itemData.warbandBankCount = warbandBankCount
+        itemData.warbandBankKnown = warbandBankKnown
+        itemData.warbandBankCurrent = warbandBankCurrent
+        itemData.warbandBankUpdatedAt = warbandBankUpdatedAt
+    end
+    return itemData
 end
 
 local function GetSparkQuantities(prev, bankDataAuthoritative, preservePreviousSnapshot)
@@ -691,9 +727,17 @@ local function GetCurrencyData(prev, preserveSparkSnapshot)
             local totalEarned = info.totalEarned or 0
             local quantityEarnedThisWeek = info.quantityEarnedThisWeek or 0
             local useTotalEarnedForMaxQty = info.useTotalEarnedForMaxQty == true
+            local liftedMistcrestCap = string.find(currencyDef.key, "Mistcrest", 1, true) ~= nil
+                and maxWeeklyQuantity == 0 and info.canEarnPerWeek == false
+                and useTotalEarnedForMaxQty and totalEarned > 0 and maxQuantity == totalEarned
+            if liftedMistcrestCap then
+                -- After the cap lift WoW reports the earned amount as maxQuantity.
+                maxQuantity = 0
+            end
             if useTotalEarnedForMaxQty and (currencyDef.key == "tidalSparkDust" or maxQuantity <= 0) then
                 local tooltipMaximum = GetCurrencyTooltipMaximum(currencyDef.id)
-                if tooltipMaximum and tooltipMaximum > maxQuantity and tooltipMaximum >= totalEarned then
+                if tooltipMaximum and tooltipMaximum > maxQuantity and tooltipMaximum >= totalEarned
+                    and (not liftedMistcrestCap or tooltipMaximum > totalEarned) then
                     maxQuantity = tooltipMaximum
                 end
             end
@@ -721,6 +765,7 @@ local function GetCurrencyData(prev, preserveSparkSnapshot)
                 trackedQuantity = info.trackedQuantity or 0,
                 quantityEarnedThisWeek = quantityEarnedThisWeek,
                 useTotalEarnedForMaxQty = useTotalEarnedForMaxQty,
+                isAccountWide = info.isAccountWide == true,
                 canEarnPerWeek = info.canEarnPerWeek == true,
                 discovered = info.discovered == true,
                 quality = info.quality,
@@ -821,7 +866,14 @@ local function GetCurrencyData(prev, preserveSparkSnapshot)
         weekKey = weekKey,
     }
 
-    result.scaleboundHeraldFlute = GetScaleboundFluteQuantities(prev, preserveSparkSnapshot)
+    result.scaleboundHeraldFlute = GetTrackedItemQuantities(
+        prev, "scaleboundHeraldFlute", SCALEBOUND_HERALD_FLUTE_ITEM_ID,
+        SCALEBOUND_HERALD_FLUTE_ICON_FILE_ID, true, preserveSparkSnapshot)
+    for _, itemDef in ipairs(TRACKED_ITEMS) do
+        result[itemDef.key] = GetTrackedItemQuantities(
+            prev, itemDef.key, itemDef.itemID, itemDef.iconFileID,
+            itemDef.includeWarbandBank, preserveSparkSnapshot)
+    end
 
     return result
 end
