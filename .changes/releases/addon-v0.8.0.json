@@ -1,0 +1,12 @@
+{
+  "component": "addon",
+  "current_version": "0.7.2",
+  "version": "0.8.0",
+  "bump": "minor",
+  "tag": "v0.8.0",
+  "release_name": "KeystoneSync 0.8.0",
+  "asset": "KeystoneSync-v0.8.0.zip",
+  "changesets": [
+    "tracked-currencies-items.json"
+  ]
+}
