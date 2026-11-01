@@ -9,3 +9,5 @@
 
 KeystoneLootIntegration.lua
 KeystoneSync.lua
+RoleTokenResolver.lua
+RoleTokenMacros.lua

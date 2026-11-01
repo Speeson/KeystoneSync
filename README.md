@@ -104,6 +104,37 @@ these additive exact-variant fields while remaining compatible with older snapsh
    ```
 3. Enable the addon in-game from the AddOns menu on the character select screen.
 
+## Role tokens in Retail macros
+
+Role tokens are enabled by default. In an ordinary WoW macro, use `@tank`, `@healer`, or
+`@dps`, optionally followed by a position (`@tank2`, `@healer3`, etc.). The unnumbered
+token is position 1. KeystoneSync rewrites only supported macro condition selectors,
+replacing them with a group UnitID such as `party2` or `raid7`. Existing `@party1`,
+`@focus`, and macros without role tokens are left alone.
+
+```text
+#showtooltip Tricks of the Trade
+/cast [@focus,help,nodead][@tank,exists,help,nodead][@tank2,exists,help,nodead] Tricks of the Trade
+```
+
+The addon uses assigned group roles, not character specialization, and never selects
+your own character. In raids an assigned Main Tank comes first. If no candidate
+exists, the token remains unresolved. Include `exists` (and, where appropriate,
+`help` and `nodead`) so WoW can safely fall through to the next macro clause.
+Group changes during combat update the macro after combat ends.
+
+`/ksrole status` shows the group, role assignments, managed macro count, and pending
+combat update. `/ksrole refresh` rescans macros. `/ksrole disable` restores saved
+templates and stops updating; `/ksrole enable` resumes. `/ksrole restore` also
+restores templates and disables the feature. Restoration during combat waits until
+combat ends. Restore before uninstalling: once the addon is removed it cannot run
+cleanup code. If an edit or macro identity is ambiguous, KeystoneSync leaves the
+macro intact and warns in chat. Reintroduce the role token manually to relink it.
+
+KeystoneSync suspends this feature while RoleTokens is loaded, to avoid both addons
+rewriting the same macros. This V1 supports Retail only and does not cast spells or
+change action bars, focus, bindings, or KeystoneClient data.
+
 ## Slash command
 
 ```
