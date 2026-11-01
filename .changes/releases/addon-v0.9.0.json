@@ -1,0 +1,12 @@
+{
+  "component": "addon",
+  "current_version": "0.8.0",
+  "version": "0.9.0",
+  "bump": "minor",
+  "tag": "v0.9.0",
+  "release_name": "KeystoneSync 0.9.0",
+  "asset": "KeystoneSync-v0.9.0.zip",
+  "changesets": [
+    "role-tokens-macros.json"
+  ]
+}

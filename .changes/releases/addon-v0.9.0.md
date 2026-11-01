@@ -1,0 +1,8 @@
+# KeystoneSync 0.9.0
+
+## Novedades
+
+- Añade tokens dinámicos por rol para macros de WoW Retail.
+  - Resuelve @tank, @healer y @dps con índices opcionales según los roles asignados del grupo y prioriza el Main Tank de banda.
+  - Conserva las plantillas originales, restaura las macros al desactivar la función y aplaza las ediciones durante el combate.
+  - Incluye comandos para consultar el estado, actualizar y restaurar macros, con protección ante conflictos con RoleTokens.
