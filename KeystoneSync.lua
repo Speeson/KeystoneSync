@@ -231,10 +231,16 @@ end
 
 local function CountItemInBags(itemID)
     local total = 0
-    if not C_Container then return total end
+    if not C_Container or type(C_Container.GetContainerNumSlots) ~= "function"
+        or type(C_Container.GetContainerItemInfo) ~= "function" then
+        return nil
+    end
 
     for bag = 0, NUM_BAG_SLOTS do
-        local slots = C_Container.GetContainerNumSlots(bag) or 0
+        local slots = C_Container.GetContainerNumSlots(bag)
+        if type(slots) ~= "number" or (issecretvalue and issecretvalue(slots)) then
+            return nil
+        end
         for slot = 1, slots do
             local info = C_Container.GetContainerItemInfo(bag, slot)
             if info and info.itemID == itemID then
@@ -710,7 +716,7 @@ local function GetCurrencyTooltipMaximum(currencyId)
     return nil
 end
 
-local function GetCurrencyData(prev, preserveSparkSnapshot)
+local function GetCurrencyData(prev, preserveInventorySnapshot)
     local result = {}
 
     for _, currencyDef in ipairs(CURRENCIES) do
@@ -807,7 +813,7 @@ local function GetCurrencyData(prev, preserveSparkSnapshot)
     end
 
     local sparkDust = result.tidalSparkDust
-    local spark = GetSparkQuantities(prev, personalBankAccessible, preserveSparkSnapshot)
+    local spark = GetSparkQuantities(prev, personalBankAccessible, preserveInventorySnapshot)
 
     result.sparksOfTides = {
         itemID = SPARK_OF_TIDES_ITEM_ID,
@@ -827,16 +833,30 @@ local function GetCurrencyData(prev, preserveSparkSnapshot)
         iconPath = GetTexturePath(C_Item.GetItemIconByID(SPARK_OF_TIDES_ITEM_ID)),
     }
 
-    local bagCount = 0
-    local bagCountOK, rawBagCount = pcall(CountItemInBags, TROVEHUNTERS_BOUNTY_ITEM_ID)
-    if bagCountOK and (not issecretvalue or not issecretvalue(rawBagCount)) and type(rawBagCount) == "number" then
-        bagCount = rawBagCount
+    local weekKey = GetWeeklyResetKey()
+    local previousBounty = prev and prev.currencies and prev.currencies.trovehuntersBounty
+    local previousBountyThisWeek = previousBounty and previousBounty.weekKey == weekKey
+
+    local bagCount = nil
+    if not preserveInventorySnapshot then
+        local bagCountOK, rawBagCount = pcall(CountItemInBags, TROVEHUNTERS_BOUNTY_ITEM_ID)
+        if bagCountOK and (not issecretvalue or not issecretvalue(rawBagCount)) and type(rawBagCount) == "number" then
+            bagCount = rawBagCount
+        end
+    end
+    if bagCount == nil and previousBountyThisWeek and type(previousBounty.bagCount) == "number" then
+        bagCount = previousBounty.bagCount
     end
 
-    local hasBuff = false
-    if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+    local hasBuff = nil
+    if not preserveInventorySnapshot and C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
         local auraOK, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, TROVEHUNTERS_BOUNTY_BUFF_SPELL_ID)
-        hasBuff = auraOK and aura ~= nil and (not issecretvalue or not issecretvalue(aura))
+        if auraOK and (not issecretvalue or not issecretvalue(aura)) then
+            hasBuff = aura ~= nil
+        end
+    end
+    if hasBuff == nil and previousBountyThisWeek and type(previousBounty.hasBuff) == "boolean" then
+        hasBuff = previousBounty.hasBuff
     end
 
     local questCompleted = false
@@ -845,9 +865,7 @@ local function GetCurrencyData(prev, preserveSparkSnapshot)
         questCompleted = questValue == true
     end
 
-    local weekKey = GetWeeklyResetKey()
-    local previousBounty = prev and prev.currencies and prev.currencies.trovehuntersBounty
-    if not questCompleted and previousBounty and previousBounty.weekKey == weekKey and previousBounty.questCompleted then
+    if not questCompleted and previousBountyThisWeek and previousBounty.questCompleted then
         questCompleted = true
     end
 
@@ -868,11 +886,11 @@ local function GetCurrencyData(prev, preserveSparkSnapshot)
 
     result.scaleboundHeraldFlute = GetTrackedItemQuantities(
         prev, "scaleboundHeraldFlute", SCALEBOUND_HERALD_FLUTE_ITEM_ID,
-        SCALEBOUND_HERALD_FLUTE_ICON_FILE_ID, true, preserveSparkSnapshot)
+        SCALEBOUND_HERALD_FLUTE_ICON_FILE_ID, true, preserveInventorySnapshot)
     for _, itemDef in ipairs(TRACKED_ITEMS) do
         result[itemDef.key] = GetTrackedItemQuantities(
             prev, itemDef.key, itemDef.itemID, itemDef.iconFileID,
-            itemDef.includeWarbandBank, preserveSparkSnapshot)
+            itemDef.includeWarbandBank, preserveInventorySnapshot)
     end
 
     return result
