@@ -1,0 +1,12 @@
+{
+  "component": "addon",
+  "current_version": "0.9.0",
+  "version": "0.9.1",
+  "bump": "patch",
+  "tag": "v0.9.1",
+  "release_name": "KeystoneSync 0.9.1",
+  "asset": "KeystoneSync-v0.9.1.zip",
+  "changesets": [
+    "trovehunter-logout-count.json"
+  ]
+}

@@ -1,0 +1,7 @@
+# KeystoneSync 0.9.1
+
+## Correcciones
+
+- Evita mostrar Trovehunter's Bounty como reclamado tras cerrar sesión si el mapa sigue en las bolsas.
+  - Conserva el último recuento válido del mapa y el estado de su efecto al cerrar sesión.
+  - Si no hay una lectura previa válida, omite el recuento en lugar de guardar un cero falso.
